@@ -11,7 +11,6 @@ use crate::{
     structs::{
         read_parts, Certificate, DOLHeader, DiscHeader, WiiPartTableEntry, WiiPartitionHeader, TMD, ApploaderHeader, WiiPartType,
     },
-    window::IOWindow,
     BLOCK_DATA_OFFSET, BLOCK_DATA_SIZE, BLOCK_SIZE, reader_writer::WiiEncryptedReadWriteStream, partition_rw::PartitionReader,
 };
 

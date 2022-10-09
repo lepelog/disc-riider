@@ -168,14 +168,14 @@ impl<WS: Read + Write + Seek> WiiDiscBuilder<WS> {
         part_disc_header.fst_max_sz = part_disc_header.fst_sz;
         
         // now we can actually write the data
-        let data_start = align_next(crypto_writer.stream_position()?, 0x20);
+        let data_start = align_next(crypto_writer.stream_position()?, 0x40);
         crypto_writer.seek(SeekFrom::Start(data_start))?;
         fst.callback_all_files_mut::<PartitionAddError<E>, _>(&mut |path, offset, size| {
             *offset = crypto_writer.stream_position()?;
             let (data, padding) = partition_def.get_file_data(path)?;
             *size = data.as_ref().len() as u32;
             crypto_writer.write_all(data.as_ref())?;
-            let next_start = align_next(crypto_writer.stream_position()? + padding as u64, 0x20);
+            let next_start = align_next(crypto_writer.stream_position()? + padding as u64, 0x40);
             crypto_writer.seek(SeekFrom::Start(next_start))?;
             Ok(())
 
