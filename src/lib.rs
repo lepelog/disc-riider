@@ -5,11 +5,11 @@ use binrw::binrw;
 pub mod builder;
 mod dir_reader;
 mod fst;
+mod partition_rw;
 mod reader;
 mod reader_writer;
 pub mod structs;
 mod window;
-mod partition_rw;
 
 pub use fst::{Fst, FstNode, FstToBytes};
 pub use reader::WiiIsoReader;

@@ -11,7 +11,11 @@ where
     R: Seek,
 {
     pub fn new(source: &'a mut R, start: u64) -> io::Result<Self> {
-        let mut window = IOWindow { source, start, pos: 0 };
+        let mut window = IOWindow {
+            source,
+            start,
+            pos: 0,
+        };
         window.seek(SeekFrom::Start(0))?;
         Ok(window)
     }
@@ -26,7 +30,7 @@ where
             Ok(amt) => {
                 self.pos += amt as u64;
                 Ok(amt)
-            },
+            }
             e => e,
         }
     }
@@ -36,7 +40,7 @@ where
             Ok(()) => {
                 self.pos += buf.len() as u64;
                 Ok(())
-            },
+            }
             e => e,
         }
     }
@@ -51,7 +55,7 @@ where
             Ok(amt) => {
                 self.pos += amt as u64;
                 Ok(amt)
-            },
+            }
             e => e,
         }
     }
@@ -68,11 +72,10 @@ where
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let position = self.source.seek(match pos {
             SeekFrom::Current(_) => pos,
-            SeekFrom::End(off) => return Err(io::ErrorKind::Unsupported.into()),
+            SeekFrom::End(_off) => return Err(io::ErrorKind::Unsupported.into()),
             SeekFrom::Start(off) => SeekFrom::Start(self.start + off),
         })?;
-        self.pos = position
-            .saturating_sub(self.start);
+        self.pos = position.saturating_sub(self.start);
         Ok(self.pos)
     }
 
@@ -83,8 +86,8 @@ where
 
 #[cfg(test)]
 mod test {
-    use std::io::{Cursor, Seek, SeekFrom, Write, Read};
     use binrw::BinReaderExt;
+    use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
     use crate::IOWindow;
 
@@ -98,10 +101,10 @@ mod test {
         assert_eq!(win.stream_position().unwrap(), 3);
         let _ = win.read_be::<u16>();
         assert_eq!(win.stream_position().unwrap(), 5);
-        win.write(&[1,2,3]).unwrap();
+        win.write_all(&[1, 2, 3]).unwrap();
         win.seek(SeekFrom::Current(-3)).unwrap();
         let mut result = [0; 3];
         assert_eq!(win.read(&mut result).unwrap(), 3);
-        assert_eq!(result, [1,2,3]);
+        assert_eq!(result, [1, 2, 3]);
     }
 }

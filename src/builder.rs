@@ -1,22 +1,23 @@
 use std::{
-    borrow::{Cow, Borrow},
+    borrow::{Borrow, Cow},
     error::Error,
-    io::{self, Read, Seek, SeekFrom, Write, Cursor}, path::{Path, PathBuf}, fs::{File, OpenOptions},
+    fs::{File, OpenOptions},
+    io::{self, Cursor, Read, Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
 };
 
-use aes::{
-    cipher::{block_padding::NoPadding, BlockEncryptMut, KeyIvInit},
-    Aes128,
-};
-use binrw::{BinWriterExt, BinReaderExt};
+use aes::{cipher::KeyIvInit, Aes128};
+use binrw::{BinReaderExt, BinWriterExt};
 use sha1::{Digest, Sha1};
 
 use crate::{
+    dir_reader::{self, BuildDirError},
+    fst::FstToBytesError,
+    reader_writer::WiiEncryptedReadWriteStream,
     structs::{
-        Certificate, DiscHeader, Ticket, WiiPartTableEntry, WiiPartType,
-        WiiPartitionHeader, TMD,
+        Certificate, DiscHeader, Ticket, WiiPartTableEntry, WiiPartType, WiiPartitionHeader, TMD,
     },
-    Fst, BLOCK_DATA_OFFSET, BLOCK_SIZE, WiiIsoReader, reader_writer::WiiEncryptedReadWriteStream, FstNode, FstToBytes, GROUP_DATA_SIZE, GROUP_SIZE, fst::FstToBytesError, dir_reader::{BuildDirError, self}, IOWindow,
+    Fst, FstNode, FstToBytes, IOWindow, WiiIsoReader, GROUP_DATA_SIZE, GROUP_SIZE,
 };
 
 type Aes128CbcEnc = cbc::Encryptor<Aes128>;
@@ -37,9 +38,8 @@ pub enum PartitionAddError<E: Error> {
     #[error("binrw error: {0}")]
     BinRW(#[from] binrw::Error),
     #[error("fst build failed: {0}")]
-    Fst(#[from] FstToBytesError)
+    Fst(#[from] FstToBytesError),
 }
-
 
 // 0: disc header
 // 0x40000 partition type + offset info
@@ -106,7 +106,11 @@ impl<WS: Read + Write + Seek> WiiDiscBuilder<WS> {
         tmd: TMD,
         cert_chain: [Certificate; 3],
         partition_def: &mut P,
-    ) -> Result<(), PartitionAddError<E>> where P: WiiPartitionDefinition<E>, E: Error {
+    ) -> Result<(), PartitionAddError<E>>
+    where
+        P: WiiPartitionDefinition<E>,
+        E: Error,
+    {
         let part_data_off = self.current_data_offset;
         let mut partition_window = IOWindow::new(&mut self.file, part_data_off)?;
         self.partitions.push(WiiPartTableEntry {
@@ -132,15 +136,23 @@ impl<WS: Read + Write + Seek> WiiDiscBuilder<WS> {
         Cursor::new(&mut tmd_buf).write_be(&tmd)?;
         part_header.tmd_size = tmd_buf.len() as u32;
         println!("{}", part_header.tmd_size);
-        part_header.cert_chain_off = align_next(*part_header.tmd_off + part_header.tmd_size as u64, 0x20).into();
-        partition_window
-            .seek(SeekFrom::Start(*part_header.cert_chain_off))?;
-            partition_window.write_be(&cert_chain)?;
-        part_header.cert_chain_size = (partition_window.stream_position()? - *part_header.cert_chain_off) as u32;
+        part_header.cert_chain_off =
+            align_next(*part_header.tmd_off + part_header.tmd_size as u64, 0x20).into();
+        partition_window.seek(SeekFrom::Start(*part_header.cert_chain_off))?;
+        partition_window.write_be(&cert_chain)?;
+        part_header.cert_chain_size =
+            (partition_window.stream_position()? - *part_header.cert_chain_off) as u32;
         // global hash table at 0x8000, encrypted data starts at 0x20000
         let mut h3: Box<[u8; 0x18000]> = vec![0u8; 0x18000].into_boxed_slice().try_into().unwrap();
         // now we write encrypted data
-        let mut crypto_writer = WiiEncryptedReadWriteStream::create_write(&mut partition_window, &mut h3, 0x20000, part_header.ticket.title_key, None, 0);
+        let mut crypto_writer = WiiEncryptedReadWriteStream::create_write(
+            &mut partition_window,
+            &mut h3,
+            0x20000,
+            part_header.ticket.title_key,
+            None,
+            0,
+        );
         let mut fst = FstToBytes::try_from(partition_def.get_fst()?)?;
         let mut part_disc_header = partition_def.get_disc_header()?;
         println!("{:?}", crypto_writer.stream_position());
@@ -166,7 +178,7 @@ impl<WS: Read + Write + Seek> WiiDiscBuilder<WS> {
         let fst_end = crypto_writer.stream_position()?;
         part_disc_header.fst_sz = (fst_end - *part_disc_header.fst_off).into();
         part_disc_header.fst_max_sz = part_disc_header.fst_sz;
-        
+
         // now we can actually write the data
         let data_start = align_next(crypto_writer.stream_position()?, 0x40);
         crypto_writer.seek(SeekFrom::Start(data_start))?;
@@ -178,7 +190,6 @@ impl<WS: Read + Write + Seek> WiiDiscBuilder<WS> {
             let next_start = align_next(crypto_writer.stream_position()? + padding as u64, 0x40);
             crypto_writer.seek(SeekFrom::Start(next_start))?;
             Ok(())
-
         })?;
 
         // align total size to next full group
@@ -289,19 +300,26 @@ impl<'b, RS: Read + Seek> WiiPartitionDefinition<std::convert::Infallible> for C
     }
 
     fn get_dol<'a>(&'a mut self) -> Result<Cow<'a, [u8]>, CpBuildErr> {
-        Ok(self.crypto_stream.read_dol(*self.disc_header.dol_off)?.into())
+        Ok(self
+            .crypto_stream
+            .read_dol(*self.disc_header.dol_off)?
+            .into())
     }
 
     fn get_file_data<'a>(
         &'a mut self,
         path: &Vec<String>,
     ) -> Result<(Cow<'a, [u8]>, u32), CpBuildErr> {
-        match self.original_fst.find_node_iter(path.iter().map(Borrow::borrow)) {
+        match self
+            .original_fst
+            .find_node_iter(path.iter().map(Borrow::borrow))
+        {
             Some(FstNode::File { offset, length, .. }) => {
                 println!("copying {:?}, {}", path, offset);
-                self.crypto_stream.read_into_vec(*offset, *length as u64, &mut self.buffer)?;
+                self.crypto_stream
+                    .read_into_vec(*offset, *length as u64, &mut self.buffer)?;
                 Ok((Cow::Borrowed(&self.buffer), 0))
-            },
+            }
             _ => panic!("???"),
         }
     }
@@ -310,7 +328,15 @@ impl<'b, RS: Read + Seek> WiiPartitionDefinition<std::convert::Infallible> for C
 fn build_copy(src: &Path, dest: &Path) -> Result<(), CpBuildErr> {
     let f = File::open(src)?;
     let mut reader = WiiIsoReader::create(f)?;
-    let mut builder = WiiDiscBuilder::create(OpenOptions::new().truncate(true).read(true).write(true).open(dest)?, reader.get_header().clone(), reader.get_region().clone());
+    let mut builder = WiiDiscBuilder::create(
+        OpenOptions::new()
+            .truncate(true)
+            .read(true)
+            .write(true)
+            .open(dest)?,
+        reader.get_header().clone(),
+        *reader.get_region(),
+    );
     let mut part_reader = reader.open_partition_stream(&WiiPartType::Data)?;
     let ticket = part_reader.get_partition_header().ticket.clone();
     let tmd = part_reader.read_tmd()?;
@@ -328,8 +354,20 @@ fn build_copy(src: &Path, dest: &Path) -> Result<(), CpBuildErr> {
             files.retain(|f| f.get_name().starts_with("Demo"));
         }
     }
-    let mut copy_builder = CopyBuilder { disc_header, bi2, original_fst, buffer: Vec::new(), crypto_stream: part_reader.open_encryption_reader() };
-    builder.add_partition(WiiPartType::Data, ticket, tmd, cert_chain, &mut copy_builder)?;
+    let mut copy_builder = CopyBuilder {
+        disc_header,
+        bi2,
+        original_fst,
+        buffer: Vec::new(),
+        crypto_stream: part_reader.open_encryption_reader(),
+    };
+    builder.add_partition(
+        WiiPartType::Data,
+        ticket,
+        tmd,
+        cert_chain,
+        &mut copy_builder,
+    )?;
     builder.finish()?;
     Ok(())
 }
@@ -408,7 +446,10 @@ fn try_open(path: PathBuf) -> Result<File, DirPartAddErr> {
     }
 }
 
-pub fn build_from_directory<WS: Write + Seek + Read>(dir: &Path, dest: &mut WS) -> Result<(), DirPartAddErr> {
+pub fn build_from_directory<WS: Write + Seek + Read>(
+    dir: &Path,
+    dest: &mut WS,
+) -> Result<(), DirPartAddErr> {
     let mut disc_header = {
         let mut path = dir.to_owned();
         path.push("DATA");
@@ -428,7 +469,7 @@ pub fn build_from_directory<WS: Write + Seek + Read>(dir: &Path, dest: &mut WS) 
         f.read_exact(&mut region)?;
         region
     };
-    let mut builder = WiiDiscBuilder::create(dest, disc_header.clone(), region);
+    let mut builder = WiiDiscBuilder::create(dest, disc_header, region);
     let mut partition_path = dir.to_owned();
     partition_path.push("DATA");
     let ticket = {
@@ -451,8 +492,13 @@ pub fn build_from_directory<WS: Write + Seek + Read>(dir: &Path, dest: &mut WS) 
     };
     let mut files_dir = partition_path.clone();
     files_dir.push("files");
-    let fst = dir_reader::build_fst_from_directory_tree(&files_dir).map_err(PartitionAddError::Custom)?;
-    let mut dir_builder = DirPartitionBuilder { base_dir: partition_path, buf: Vec::new(), fst };
+    let fst =
+        dir_reader::build_fst_from_directory_tree(&files_dir).map_err(PartitionAddError::Custom)?;
+    let mut dir_builder = DirPartitionBuilder {
+        base_dir: partition_path,
+        buf: Vec::new(),
+        fst,
+    };
     builder.add_partition(WiiPartType::Data, ticket, tmd, cert_chain, &mut dir_builder)?;
     builder.finish()?;
     Ok(())

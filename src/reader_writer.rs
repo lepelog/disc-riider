@@ -1,12 +1,11 @@
 use std::{
+    fs::{create_dir_all, File},
     io::{self, Read, Seek, SeekFrom, Write},
-    ops::Range, path::{Path, PathBuf}, fs::{File, create_dir_all},
+    path::{Path, PathBuf},
 };
 
 use aes::{
-    cipher::{
-        block_padding::NoPadding, generic_array::functional::FunctionalSequence, BlockEncryptMut,
-    },
+    cipher::{block_padding::NoPadding, BlockEncryptMut},
     cipher::{BlockDecryptMut, KeyIvInit},
     Aes128,
 };
@@ -15,7 +14,8 @@ use sha1::{Digest, Sha1};
 use thiserror::Error;
 
 use crate::{
-    IOWindow, BLOCK_DATA_OFFSET, BLOCK_DATA_SIZE, BLOCK_SIZE, GROUP_DATA_SIZE, GROUP_SIZE, structs::{DiscHeader, ApploaderHeader, DOLHeader}, reader::read_apploader, Fst,
+    structs::{ApploaderHeader, DOLHeader, DiscHeader},
+    BLOCK_DATA_OFFSET, BLOCK_DATA_SIZE, BLOCK_SIZE, GROUP_DATA_SIZE, GROUP_SIZE,
 };
 
 type Aes128CbcEnc = cbc::Encryptor<Aes128>;
@@ -170,7 +170,7 @@ fn decrypt_verify_group(
             }
             hasher.update(&h0);
             h1[c * 20..][..20].copy_from_slice(&hasher.finalize_reset());
-            if &ptr0[..h0.len()] != &h0 || &ptr0[h0.len()..][..0x14] != &[0; 0x14] {
+            if ptr0[..h0.len()] != h0 || ptr0[h0.len()..][..0x14] != [0; 0x14] {
                 return Err(VerificationError::H0Invalid(s * 8 + c));
             }
         }
@@ -178,14 +178,14 @@ fn decrypt_verify_group(
         h2[s * 20..][..20].copy_from_slice(&hasher.finalize_reset());
         for c in 0..8 {
             let ptr0 = &ptr1[c * 0x8000..];
-            if &ptr0[0x280..][..h1.len()] != &h1 || &ptr0[0x320..][..0x20] != &[0; 0x20] {
+            if ptr0[0x280..][..h1.len()] != h1 || ptr0[0x320..][..0x20] != [0; 0x20] {
                 return Err(VerificationError::H1Invalid(s * 8 + c));
             }
         }
     }
 
     hasher.update(&h2);
-    if &h3_ref != &hasher.finalize_reset().as_slice() {
+    if h3_ref != hasher.finalize_reset().as_slice() {
         return Err(VerificationError::H3Invalid);
     }
 
@@ -193,7 +193,7 @@ fn decrypt_verify_group(
         let ptr1 = &buffer[s * 0x40000..];
         for c in 0..8 {
             let ptr0 = &ptr1[c * 0x8000..];
-            if &ptr0[0x340..][..h2.len()] != &h2 || &ptr0[0x3E0..][..0x20] != &[0; 0x20] {
+            if ptr0[0x340..][..h2.len()] != h2 || ptr0[0x3E0..][..0x20] != [0; 0x20] {
                 return Err(VerificationError::H2Invalid(s * 8 + c));
             }
         }
@@ -202,7 +202,12 @@ fn decrypt_verify_group(
 }
 
 impl<'a, RS: Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
-    pub fn create_readonly(file: &'a mut RS, data_offset: u64, encryption_key: [u8; 16], max_group: u64) -> Self {
+    pub fn create_readonly(
+        file: &'a mut RS,
+        data_offset: u64,
+        encryption_key: [u8; 16],
+        max_group: u64,
+    ) -> Self {
         // let group_cache = Box::new([0; GROUP_SIZE as usize]);
         let group_cache = vec![0; GROUP_SIZE as usize]
             .into_boxed_slice()
@@ -324,10 +329,10 @@ impl<'a, RS: Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
                 .unwrap(),
         );
         if dol_size == u32::MAX {
-            return Err(binrw::Error::Custom {
+            Err(binrw::Error::Custom {
                 pos: dol_offset,
                 err: Box::new("overflow calculating dol size!"),
-            });
+            })
         } else {
             let mut out_buf = Vec::new();
             self.read_into_vec(dol_offset, dol_size as u64, &mut out_buf)?;
@@ -335,8 +340,20 @@ impl<'a, RS: Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
         }
     }
 
+    pub fn read_disc_header(&mut self) -> binrw::BinResult<DiscHeader> {
+        self.seek(SeekFrom::Start(0))?;
+        self.read_be()
+    }
+
     pub fn extract_system_files(&mut self, path: &Path) -> binrw::BinResult<()> {
-        fn write_binrw<B: BinWrite>(sys_foler: &PathBuf, filename: &str, data: &B) -> binrw::BinResult<()> where <B as BinWrite>::Args: Default {
+        fn write_binrw<B: BinWrite>(
+            sys_foler: &PathBuf,
+            filename: &str,
+            data: &B,
+        ) -> binrw::BinResult<()>
+        where
+            <B as BinWrite>::Args: Default,
+        {
             let mut path = sys_foler.clone();
             path.push(filename);
             let mut f = File::create(path)?;
@@ -344,8 +361,8 @@ impl<'a, RS: Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
             f.flush()?;
             Ok(())
         }
-        fn write_file(sys_foler: &PathBuf, filename: &str, data: &[u8]) -> io::Result<()> {
-            let mut path = sys_foler.clone();
+        fn write_file(sys_folder: &Path, filename: &str, data: &[u8]) -> io::Result<()> {
+            let mut path = sys_folder.to_path_buf();
             path.push(filename);
             let mut f = File::create(path)?;
             f.write_all(data)?;
@@ -368,7 +385,11 @@ impl<'a, RS: Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
         let dol = self.read_dol(*disc_header.dol_off)?;
         write_file(&sys_folder, "main.dol", &dol)?;
         let mut fst_buf = Vec::new();
-        self.read_into_vec(*disc_header.fst_off, *disc_header.fst_sz as u64, &mut fst_buf)?;
+        self.read_into_vec(
+            *disc_header.fst_off,
+            *disc_header.fst_sz as u64,
+            &mut fst_buf,
+        )?;
         write_file(&sys_folder, "fst.bin", &fst_buf)?;
         Ok(())
     }
@@ -412,7 +433,7 @@ impl<'a, RS: Read + Seek> Read for WiiEncryptedReadWriteStream<'a, RS> {
         let mut block = (self.current_position % GROUP_DATA_SIZE) / BLOCK_DATA_SIZE;
         let mut offset_in_block_data = self.current_position % BLOCK_DATA_SIZE;
         let mut read_bytes = 0;
-        while buf.len() > 0 {
+        while !buf.is_empty() {
             if max_size.map_or(false, |size| self.current_position >= size) {
                 break;
             }
@@ -445,8 +466,9 @@ impl<'a, WS: Write + Read + Seek> Write for WiiEncryptedReadWriteStream<'a, WS> 
                 let mut bytes_written = 0;
                 let mut group = self.current_position / GROUP_DATA_SIZE;
                 let mut block = (self.current_position % GROUP_DATA_SIZE) / BLOCK_DATA_SIZE;
-                let mut offset_in_block = BLOCK_DATA_OFFSET + (self.current_position % BLOCK_DATA_SIZE);
-                while buf.len() > 0 {
+                let mut offset_in_block =
+                    BLOCK_DATA_OFFSET + (self.current_position % BLOCK_DATA_SIZE);
+                while !buf.is_empty() {
                     if max_group.map_or(false, |g| g <= group) {
                         // we are above the limit
                         break;
@@ -474,13 +496,10 @@ impl<'a, WS: Write + Read + Seek> Write for WiiEncryptedReadWriteStream<'a, WS> 
                             // we can skip loading the previous data if
                             // - we are at the start of a group and would completely overwrite it
                             // - or if this is a block that didn't exist previously
-                            if !(
-                                (
-                                block == 0
+                            if !((block == 0
                                 && offset_in_block == 0x400
                                 && buf.len() >= GROUP_DATA_SIZE as usize)
-                                || 
-                                group > self.filled_groups)
+                                || group > self.filled_groups)
                             {
                                 // TODO: you *could* seek an entire block ahead, in that case there
                                 // would be a completely empty block, but I guess that's fine?
@@ -562,15 +581,10 @@ impl<'a, RS: Read + Seek> Seek for WiiEncryptedReadWriteStream<'a, RS> {
 mod test {
     use std::{
         fs::File,
-        io::{Cursor, Read, Seek, SeekFrom, Write},
+        io::{Cursor, Seek, SeekFrom, Write},
     };
 
-    use binrw::BinReaderExt;
-
-    use crate::{
-        structs::{WiiPartType, WiiPartitionHeader},
-        WiiIsoReader, GROUP_DATA_SIZE, GROUP_SIZE, BLOCK_DATA_SIZE,
-    };
+    use crate::{GROUP_DATA_SIZE, GROUP_SIZE};
 
     use super::WiiEncryptedReadWriteStream;
 
@@ -580,17 +594,27 @@ mod test {
         let mut h3: Box<[u8; 0x18000]> = vec![0u8; 0x18000].into_boxed_slice().try_into().unwrap();
         let mut disc_buf: Vec<u8> = Vec::with_capacity(GROUP_SIZE as usize * 4);
         let mut cur = Cursor::new(&mut disc_buf);
-        let mut encrypt_write =
-            WiiEncryptedReadWriteStream::create_write(&mut cur, &mut h3, 0, [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], None, 0);
+        let mut encrypt_write = WiiEncryptedReadWriteStream::create_write(
+            &mut cur,
+            &mut h3,
+            0,
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+            None,
+            0,
+        );
         let garbage = Box::new([12u8; GROUP_DATA_SIZE as usize + 0x1000]);
         encrypt_write.write(garbage.as_ref()).unwrap();
         encrypt_write.seek(SeekFrom::Start(200)).unwrap();
         encrypt_write.write(&[69; 200]).unwrap();
-        encrypt_write.seek(SeekFrom::Start(GROUP_DATA_SIZE + 100)).unwrap();
+        encrypt_write
+            .seek(SeekFrom::Start(GROUP_DATA_SIZE + 100))
+            .unwrap();
         encrypt_write.write(&[1; 500]).unwrap();
         encrypt_write.flush().unwrap();
         let mut data = Vec::new();
-        encrypt_write.read_into_vec(0, GROUP_DATA_SIZE + 0x1000, &mut data).unwrap();
+        encrypt_write
+            .read_into_vec(0, GROUP_DATA_SIZE + 0x1000, &mut data)
+            .unwrap();
         let mut outf = File::create("test.bin").unwrap();
         outf.write_all(&data).unwrap();
         drop(outf);

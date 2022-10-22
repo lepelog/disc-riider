@@ -1,5 +1,4 @@
 use std::{
-    collections::{HashMap, HashSet},
     ffi::OsString,
     fs, io,
     path::{Path, PathBuf},
@@ -67,7 +66,6 @@ fn build_fst_from_directory_tree_rec<P: AsRef<Path> + ?Sized>(
 
 #[cfg(test)]
 mod test {
-    use crate::{Fst, FstNode};
 
     use super::build_fst_from_directory_tree;
 

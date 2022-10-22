@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    io::{self, Cursor, Read, Seek, SeekFrom, Write},
+    io::{Read, Seek, SeekFrom, Write},
     iter::once,
 };
 
@@ -9,7 +9,7 @@ use encoding_rs::SHIFT_JIS;
 use thiserror::Error;
 
 #[binrw]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawFstNode {
     #[br(temp)]
     #[bw(calc = (if *is_directory { 1 } else { 0 }) << 24 | name_offset)]
@@ -108,7 +108,7 @@ fn ordering_ignore_case(s1: &str, s2: &str) -> Ordering {
             o => return o,
         };
     }
-    return Ordering::Equal;
+    Ordering::Equal
 }
 
 impl FstNode {
@@ -154,7 +154,7 @@ where
 {
     let cur_part = iter.next()?;
     let mut cur_node = nodes.iter().find(|n| n.get_name() == cur_part)?;
-    while let Some(cur_part) = iter.next() {
+    for cur_part in iter {
         match cur_node {
             FstNode::Directory { files, .. } => {
                 cur_node = files.iter().find(|n| n.get_name() == cur_part)?;
@@ -163,7 +163,7 @@ where
             FstNode::File { .. } => return None,
         }
     }
-    Some(&cur_node)
+    Some(cur_node)
 }
 
 pub fn find_node_iter_mut<'a, 'b, I>(
@@ -175,7 +175,7 @@ where
 {
     let cur_part = iter.next()?;
     let mut cur_node = nodes.iter_mut().find(|n| n.get_name() == cur_part)?;
-    while let Some(cur_part) = iter.next() {
+    for cur_part in iter {
         match cur_node {
             FstNode::Directory { files, .. } => {
                 cur_node = files.iter_mut().find(|n| n.get_name() == cur_part)?;
@@ -184,7 +184,7 @@ where
             FstNode::File { .. } => return None,
         }
     }
-    Some(cur_node.as_mut())
+    Some(cur_node)
 }
 
 pub fn remove_node_iter<'a, 'b, I>(nodes: &'a mut Vec<FstNode>, iter: I) -> Option<FstNode>
@@ -265,7 +265,7 @@ where
             }
         }
     };
-    while let Some(cur_part) = iter.next() {
+    for cur_part in iter {
         let node = match dir_node_files
             .binary_search_by(|probe| ordering_ignore_case(probe.get_name(), cur_part))
         {
@@ -292,12 +292,12 @@ where
         Ok(pos) => {
             // since the path is exhausted, replace the node completely
             std::mem::swap(&mut new_node, &mut dir_node_files[pos]);
-            return Ok(Some(new_node));
+            Ok(Some(new_node))
         }
         Err(pos) => {
             // new file, vec is still sorted
             dir_node_files.insert(pos, new_node);
-            return Ok(None);
+            Ok(None)
         }
     }
 }
@@ -368,7 +368,7 @@ impl Fst {
 
     /// Returns an immutable reference to the FstNode by path if it's found
     pub fn find_node_path<'a>(&'a self, s: &str) -> Option<&'a FstNode> {
-        self.find_node_iter(s.split('/').filter(|p| p.len() != 0))
+        self.find_node_iter(s.split('/').filter(|p| !p.is_empty()))
     }
 
     pub fn find_node_iter<'a, 'b, I>(&'a self, iter: I) -> Option<&'a FstNode>
@@ -380,7 +380,7 @@ impl Fst {
 
     /// Returns an immutable reference to the FstNode by path if it's found
     pub fn find_node_path_mut<'a>(&'a mut self, s: &str) -> Option<&'a mut FstNode> {
-        self.find_node_iter_mut(s.split('/').filter(|p| p.len() != 0))
+        self.find_node_iter_mut(s.split('/').filter(|p| !p.is_empty()))
     }
 
     pub fn find_node_iter_mut<'a, 'b, I>(&'a mut self, iter: I) -> Option<&'a mut FstNode>
@@ -391,7 +391,7 @@ impl Fst {
     }
 
     pub fn remove_node_path(&mut self, s: &str) -> Option<FstNode> {
-        self.remove_node_iter(s.split('/').filter(|p| p.len() != 0))
+        self.remove_node_iter(s.split('/').filter(|p| !p.is_empty()))
     }
 
     pub fn remove_node_iter<'a, 'b, I>(&mut self, iter: I) -> Option<FstNode>
@@ -402,7 +402,7 @@ impl Fst {
     }
 
     pub fn add_node_path(&mut self, s: &str, node: FstNode) -> Result<Option<FstNode>, ()> {
-        self.add_node_iter(s.split('/').filter(|p| p.len() != 0), node)
+        self.add_node_iter(s.split('/').filter(|p| !p.is_empty()), node)
     }
 
     pub fn add_node_iter<'a, 'b, I>(
@@ -651,7 +651,7 @@ impl FstToBytes {
                         offset: parent_idx,
                         length: u32::MAX,
                     });
-                    Self::build_node_bytes_rec(&files, str_offsets, raw_nodes, idx);
+                    Self::build_node_bytes_rec(files, str_offsets, raw_nodes, idx);
                     // this index is always inbounds, but this way it doesn't introduce a panicking branch
                     if let Some(node) = raw_nodes.get_mut(this_idx) {
                         node.length = *idx;
@@ -672,7 +672,7 @@ impl FstToBytes {
 
 #[cfg(test)]
 mod test {
-    use std::{io::{Cursor, Write}, fs::File};
+    use std::io::Cursor;
 
     use crate::{Fst, FstNode};
 

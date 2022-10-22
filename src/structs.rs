@@ -16,7 +16,7 @@ pub fn read_u64_shifted<R: Read + Seek>(r: &mut R) -> binrw::BinResult<u64> {
     Ok((r.read_be::<u32>()? as u64) << 2)
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[binrw]
 #[brw(repr = u32)]
 // #[bw(repr = u32)]
@@ -32,7 +32,7 @@ impl WiiPartType {
             "DATA" => Some(WiiPartType::Data),
             "CHANNEL" => Some(WiiPartType::Channel),
             "UPDATE" => Some(WiiPartType::Update),
-            _ => None
+            _ => None,
         }
     }
 }
@@ -54,7 +54,7 @@ enum KeyType {
     Rsa2048 = 0x00000001,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[binrw]
 pub struct WiiPartTableEntry {
     pub part_data_off: ShiftedU64,
@@ -141,7 +141,7 @@ pub struct Ticket {
 }
 
 #[binrw]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TMDContent {
     id: u32,
     index: u16,
@@ -214,7 +214,7 @@ pub struct WiiPartitionHeader {
 
 /// Wii disc header
 #[binrw]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiscHeader {
     pub game_id: [u8; 6],
     /// Used in multi-disc games
@@ -254,7 +254,7 @@ pub struct DiscHeader {
 }
 
 #[binrw]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DOLHeader {
     pub text_off: [u32; 7],
     pub data_off: [u32; 11],
@@ -268,7 +268,7 @@ pub struct DOLHeader {
 }
 
 #[binrw]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApploaderHeader {
     #[brw(pad_before = 0x14)]
     pub size1: u32,
