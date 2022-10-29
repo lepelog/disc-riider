@@ -606,6 +606,20 @@ impl FstToBytes {
         Ok(())
     }
 
+    pub fn get_total_file_count(&self) -> usize {
+        Self::get_total_file_count_rec(&self.fst.entries)
+    }
+
+    fn get_total_file_count_rec(nodes: &Vec<FstNode>) -> usize {
+        nodes
+            .iter()
+            .map(|node| match node {
+                FstNode::File { .. } => 1,
+                FstNode::Directory { files, .. } => Self::get_total_file_count_rec(files),
+            })
+            .sum()
+    }
+
     pub fn write_to<W: Write + Seek>(&self, w: &mut W) -> binrw::BinResult<()> {
         let mut raw_nodes = Vec::with_capacity(self.str_offsets.len());
         raw_nodes.push(RawFstNode {

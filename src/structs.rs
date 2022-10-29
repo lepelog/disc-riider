@@ -228,8 +228,8 @@ pub struct DiscHeader {
     /// If this is a GameCube disc, this will be 0xC2339F3D
     pub gcn_magic: u32,
     #[brw(pad_size_to(64))]
-    #[br(map = NullString::into_string)]
-    #[bw(map = |s| NullString::from_string(s.clone()))]
+    #[br(map = |s| NullString::to_string(&s))]
+    #[bw(map = |s| NullString::from(s.clone()))]
     pub game_title: String,
     /// Disable hash verification
     pub disable_hash_verification: u8,

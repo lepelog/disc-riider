@@ -1,5 +1,6 @@
 use std::{
     borrow::{Borrow, Cow},
+    convert::Infallible,
     error::Error,
     fs::{File, OpenOptions},
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
@@ -78,6 +79,8 @@ pub trait WiiPartitionDefinition<E: Error> {
         &'a mut self,
         path: &Vec<String>,
     ) -> Result<(Cow<'a, [u8]>, u32), PartitionAddError<E>>;
+
+    fn progress_callback(&mut self, processed_files: usize, total_files: usize) {}
 }
 
 pub struct WiiDiscBuilder<WS: Read + Write + Seek> {
@@ -153,7 +156,17 @@ impl<WS: Read + Write + Seek> WiiDiscBuilder<WS> {
             None,
             0,
         );
-        let mut fst = FstToBytes::try_from(partition_def.get_fst()?)?;
+        let source_fst = partition_def.get_fst()?;
+        let mut total_files = 0;
+        source_fst
+            .callback_all_files::<Infallible, _>(&mut |_, node| {
+                if matches!(node, FstNode::File { .. }) {
+                    total_files += 1;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let mut fst = FstToBytes::try_from(source_fst)?;
         let mut part_disc_header = partition_def.get_disc_header()?;
         println!("{:?}", crypto_writer.stream_position());
         crypto_writer.seek(SeekFrom::Start(0x440))?;
@@ -182,7 +195,10 @@ impl<WS: Read + Write + Seek> WiiDiscBuilder<WS> {
         // now we can actually write the data
         let data_start = align_next(crypto_writer.stream_position()?, 0x40);
         crypto_writer.seek(SeekFrom::Start(data_start))?;
+        let mut processed_files = 0;
         fst.callback_all_files_mut::<PartitionAddError<E>, _>(&mut |path, offset, size| {
+            partition_def.progress_callback(processed_files, total_files);
+            processed_files += 1;
             *offset = crypto_writer.stream_position()?;
             let (data, padding) = partition_def.get_file_data(path)?;
             *size = data.as_ref().len() as u32;

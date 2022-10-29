@@ -3,7 +3,7 @@ use std::ops::Deref;
 use binrw::binrw;
 
 pub mod builder;
-mod dir_reader;
+pub mod dir_reader;
 mod fst;
 mod partition_rw;
 mod reader;
