@@ -1,5 +1,5 @@
 [package]
-name = "disc-riider"
+name = "disc_riider"
 version = "0.1.0"
 edition = "2021"
 
