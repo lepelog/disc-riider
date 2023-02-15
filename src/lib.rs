@@ -5,9 +5,9 @@ use binrw::binrw;
 pub mod builder;
 pub mod dir_reader;
 mod fst;
-mod partition_rw;
-mod reader;
-mod reader_writer;
+pub mod partition_rw;
+pub mod reader;
+pub mod reader_writer;
 pub mod structs;
 mod window;
 
