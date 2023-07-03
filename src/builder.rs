@@ -102,18 +102,21 @@ impl<WS: Read + Write + Seek> WiiDiscBuilder<WS> {
         }
     }
 
-    pub fn add_partition<P, E>(
+    pub fn add_partition<P, E, C>(
         &mut self,
         part_type: WiiPartType,
         ticket: Ticket,
         tmd: TMD,
         cert_chain: [Certificate; 3],
         partition_def: &mut P,
+        progress_cb: &mut C
     ) -> Result<(), PartitionAddError<E>>
     where
         P: WiiPartitionDefinition<E>,
         E: Error,
+        C: FnMut(u8),
     {
+        progress_cb(0);
         let part_data_off = self.current_data_offset;
         let mut partition_window = IOWindow::new(&mut self.file, part_data_off)?;
         self.partitions.push(WiiPartTableEntry {
@@ -146,11 +149,10 @@ impl<WS: Read + Write + Seek> WiiDiscBuilder<WS> {
         part_header.cert_chain_size =
             (partition_window.stream_position()? - *part_header.cert_chain_off) as u32;
         // global hash table at 0x8000, encrypted data starts at 0x20000
-        let mut h3: Box<[u8; 0x18000]> = vec![0u8; 0x18000].into_boxed_slice().try_into().unwrap();
+        // let mut h3: Box<[u8; 0x18000]> = vec![0u8; 0x18000].into_boxed_slice().try_into().unwrap();
         // now we write encrypted data
         let mut crypto_writer = WiiEncryptedReadWriteStream::create_write(
             &mut partition_window,
-            &mut h3,
             0x20000,
             part_header.ticket.title_key,
             None,
@@ -205,6 +207,8 @@ impl<WS: Read + Write + Seek> WiiDiscBuilder<WS> {
             crypto_writer.write_all(data.as_ref())?;
             let next_start = align_next(crypto_writer.stream_position()? + padding as u64, 0x40);
             crypto_writer.seek(SeekFrom::Start(next_start))?;
+            let done_percent = ((processed_files as f64) / (total_files as f64) * 100f64) as u8;
+            progress_cb(done_percent);
             Ok(())
         })?;
 
@@ -223,6 +227,7 @@ impl<WS: Read + Write + Seek> WiiDiscBuilder<WS> {
         crypto_writer.seek(SeekFrom::Start(0))?;
         crypto_writer.write_be(&part_disc_header)?;
         crypto_writer.flush()?;
+        let h3 = crypto_writer.take_h3().unwrap();
         // we're done with the encrypted part, only need to correct some headers now
         drop(crypto_writer);
         // write h3
@@ -383,6 +388,7 @@ fn build_copy(src: &Path, dest: &Path) -> Result<(), CpBuildErr> {
         tmd,
         cert_chain,
         &mut copy_builder,
+        &mut |_| -> () {}
     )?;
     builder.finish()?;
     Ok(())
@@ -397,17 +403,13 @@ pub struct DirPartitionBuilder {
 type DirPartAddErr = PartitionAddError<BuildDirError>;
 impl WiiPartitionDefinition<BuildDirError> for DirPartitionBuilder {
     fn get_disc_header(&mut self) -> Result<DiscHeader, DirPartAddErr> {
-        let mut path = self.base_dir.clone();
-        path.push("sys");
-        path.push("boot.bin");
+        let path = self.base_dir.join("sys/boot.bin");
         let header = try_open(path)?.read_be::<DiscHeader>()?;
         Ok(header)
     }
 
     fn get_bi2<'a>(&'a mut self) -> Result<Cow<'a, [u8]>, DirPartAddErr> {
-        let mut path = self.base_dir.clone();
-        path.push("sys");
-        path.push("bi2.bin");
+        let path = self.base_dir.join("sys/bi2.bin");
         let mut f = try_open(path)?;
         self.buf.clear();
         f.read_to_end(&mut self.buf)?;
@@ -416,9 +418,7 @@ impl WiiPartitionDefinition<BuildDirError> for DirPartitionBuilder {
 
     fn get_apploader<'a>(&'a mut self) -> Result<Cow<'a, [u8]>, DirPartAddErr> {
         self.buf.clear();
-        let mut path = self.base_dir.clone();
-        path.push("sys");
-        path.push("apploader.img");
+        let path = self.base_dir.join("sys/apploader.img");
         let mut f = try_open(path)?;
         f.read_to_end(&mut self.buf)?;
         Ok(Cow::Borrowed(&self.buf))
@@ -430,9 +430,7 @@ impl WiiPartitionDefinition<BuildDirError> for DirPartitionBuilder {
 
     fn get_dol<'a>(&'a mut self) -> Result<Cow<'a, [u8]>, DirPartAddErr> {
         self.buf.clear();
-        let mut path = self.base_dir.clone();
-        path.push("sys");
-        path.push("main.dol");
+        let path = self.base_dir.join("sys/main.dol");
         let mut f = try_open(path)?;
         f.read_to_end(&mut self.buf)?;
         Ok(Cow::Borrowed(&self.buf))
@@ -462,52 +460,42 @@ fn try_open(path: PathBuf) -> Result<File, DirPartAddErr> {
     }
 }
 
-pub fn build_from_directory<WS: Write + Seek + Read>(
+pub fn build_from_directory<WS: Write + Seek + Read, C: FnMut(u8)>(
     dir: &Path,
     dest: &mut WS,
+    progress_cb: &mut C
 ) -> Result<(), DirPartAddErr> {
     let mut disc_header = {
-        let mut path = dir.to_owned();
-        path.push("DATA");
-        path.push("sys");
-        path.push("boot.bin");
+        let path = dir.join("DATA/sys/boot.bin");
         try_open(path)?.read_be::<DiscHeader>()?
     };
     disc_header.disable_disc_enc = 0;
     disc_header.disable_hash_verification = 0;
     let region = {
-        let mut path = dir.to_owned();
-        path.push("DATA");
-        path.push("disc");
-        path.push("region.bin");
+        let path = dir.join("DATA/disc/region.bin");
         let mut f = try_open(path)?;
         let mut region = [0; 32];
         f.read_exact(&mut region)?;
         region
     };
     let mut builder = WiiDiscBuilder::create(dest, disc_header, region);
-    let mut partition_path = dir.to_owned();
-    partition_path.push("DATA");
+    let partition_path = dir.join("DATA");
     let ticket = {
-        let mut path = partition_path.clone();
-        path.push("ticket.bin");
+        let path = partition_path.join("ticket.bin");
         let mut f = try_open(path)?;
         f.read_be::<Ticket>()?
     };
     let tmd = {
-        let mut path = partition_path.clone();
-        path.push("tmd.bin");
+        let path = partition_path.join("tmd.bin");
         let mut f = try_open(path)?;
         f.read_be::<TMD>()?
     };
     let cert_chain = {
-        let mut path = partition_path.clone();
-        path.push("cert.bin");
+        let path = partition_path.join("cert.bin");
         let mut f = try_open(path)?;
         f.read_be::<[Certificate; 3]>()?
     };
-    let mut files_dir = partition_path.clone();
-    files_dir.push("files");
+    let files_dir = partition_path.join("files");
     let fst =
         dir_reader::build_fst_from_directory_tree(&files_dir).map_err(PartitionAddError::Custom)?;
     let mut dir_builder = DirPartitionBuilder {
@@ -515,7 +503,7 @@ pub fn build_from_directory<WS: Write + Seek + Read>(
         buf: Vec::new(),
         fst,
     };
-    builder.add_partition(WiiPartType::Data, ticket, tmd, cert_chain, &mut dir_builder)?;
+    builder.add_partition(WiiPartType::Data, ticket, tmd, cert_chain, &mut dir_builder, progress_cb)?;
     builder.finish()?;
     Ok(())
 }

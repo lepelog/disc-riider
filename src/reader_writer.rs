@@ -45,9 +45,8 @@ impl OpenMode {
     }
 }
 
-pub struct WiiEncryptedReadWriteStream<'a, RS: Read + Seek> {
-    file: &'a mut RS,
-    h3: Option<&'a mut [u8; 0x18000]>,
+pub struct WiiEncryptedReadWriteStreamInner {
+    h3: Option<Box<[u8; 0x18000]>>,
     data_offset: u64,
     encryption_key: [u8; 16],
     open_mode: OpenMode,
@@ -63,6 +62,17 @@ pub struct WiiEncryptedReadWriteStream<'a, RS: Read + Seek> {
     // highest group that exists currently, in write mode this can increase
     // as more groups are written
     filled_groups: u64,
+}
+
+impl WiiEncryptedReadWriteStreamInner {
+    pub fn with_file<'a, RS: Read + Seek>(self, file: &'a mut RS) -> WiiEncryptedReadWriteStream<'a, RS> {
+        WiiEncryptedReadWriteStream { inner: self, file }
+    }
+}
+
+pub struct WiiEncryptedReadWriteStream<'a, RS: Read + Seek> {
+    inner: WiiEncryptedReadWriteStreamInner,
+    file: &'a mut RS,
 }
 
 fn hash_encrypt_block(
@@ -202,6 +212,14 @@ fn decrypt_verify_group(
 }
 
 impl<'a, RS: Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
+    pub fn into_inner(self) -> WiiEncryptedReadWriteStreamInner {
+        self.inner
+    }
+
+    pub fn take_h3(&mut self) -> Option<Box<[u8; 0x18000]>> {
+        self.inner.h3.take()
+    }
+
     pub fn create_readonly(
         file: &'a mut RS,
         data_offset: u64,
@@ -215,33 +233,35 @@ impl<'a, RS: Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
             .unwrap();
         WiiEncryptedReadWriteStream {
             file,
-            h3: None,
-            data_offset,
-            encryption_key,
-            open_mode: OpenMode::Readonly { max_group },
-            current_group: None,
-            group_cache,
-            is_dirty: false,
-            current_position: 0,
-            // not relevant for readonly
-            filled_groups: 0,
+            inner: WiiEncryptedReadWriteStreamInner {
+                h3: None,
+                data_offset,
+                encryption_key,
+                open_mode: OpenMode::Readonly { max_group },
+                current_group: None,
+                group_cache,
+                is_dirty: false,
+                current_position: 0,
+                // not relevant for readonly
+                filled_groups: 0,
+            }
         }
     }
     // loads an entire group into cache and decrypts it
     fn do_load_group(&mut self, group: u64) -> io::Result<()> {
-        self.is_dirty = false;
+        self.inner.is_dirty = false;
         self.file
-            .seek(SeekFrom::Start(self.data_offset + group * GROUP_SIZE))?;
-        self.file.read_exact(self.group_cache.as_mut())?;
-        self.current_group = Some(group);
+            .seek(SeekFrom::Start(self.inner.data_offset + group * GROUP_SIZE))?;
+        self.file.read_exact(self.inner.group_cache.as_mut())?;
+        self.inner.current_group = Some(group);
         // decrypt all blocks
         // TODO: it might be possible to optimize this but it introduces some complexity regarding writes
         // and decryption is *relatively* fast anyways
         for block in 0..64 {
             let block_data =
-                &mut self.group_cache[(block * BLOCK_SIZE) as usize..][..BLOCK_SIZE as usize];
+                &mut self.inner.group_cache[(block * BLOCK_SIZE) as usize..][..BLOCK_SIZE as usize];
             let crypto = Aes128CbcDec::new(
-                self.encryption_key.as_ref().into(),
+                self.inner.encryption_key.as_ref().into(),
                 block_data[0x3d0..][..0x10].as_ref().into(),
             );
             crypto
@@ -253,11 +273,11 @@ impl<'a, RS: Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
     }
 
     fn get_decrypted_block_data(&mut self, group: u64, block: u64) -> io::Result<&[u8]> {
-        if !self.current_group.map_or(false, |g| g == group) {
+        if !self.inner.current_group.map_or(false, |g| g == group) {
             self.do_load_group(group)?;
         }
         let block_data =
-            &mut self.group_cache[(block * BLOCK_SIZE) as usize..][..BLOCK_SIZE as usize];
+            &mut self.inner.group_cache[(block * BLOCK_SIZE) as usize..][..BLOCK_SIZE as usize];
         Ok(&block_data[BLOCK_DATA_OFFSET as usize..])
     }
 
@@ -272,7 +292,7 @@ impl<'a, RS: Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
     ) -> io::Result<()> {
         buffer.clear();
         buffer.reserve(length as usize);
-        let max_size = self.open_mode.get_max_size();
+        let max_size = self.inner.open_mode.get_max_size();
         let mut group = offset / GROUP_DATA_SIZE;
         let mut block = (offset % GROUP_DATA_SIZE) / BLOCK_DATA_SIZE;
         let mut offset_in_block_data = offset % BLOCK_DATA_SIZE;
@@ -298,12 +318,8 @@ impl<'a, RS: Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
         Ok(())
     }
 
-    pub fn get_inner(&mut self) -> &mut RS {
-        self.file
-    }
-
     pub fn get_filled_groups(&self) -> u64 {
-        self.filled_groups
+        self.inner.filled_groups
     }
 
     pub fn read_apploader(&mut self) -> binrw::BinResult<Vec<u8>> {
@@ -373,8 +389,7 @@ impl<'a, RS: Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
         sys_folder.push("sys");
         create_dir_all(&sys_folder)?;
         // read header
-        self.seek(SeekFrom::Start(0))?;
-        let disc_header: DiscHeader = self.read_be()?;
+        let disc_header: DiscHeader = self.read_disc_header()?;
         write_binrw(&sys_folder, "boot.bin", &disc_header)?;
         let mut bi2 = vec![0; 0x2000];
         self.read_exact(&mut bi2)?;
@@ -400,7 +415,6 @@ impl<'a, RS: Write + Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
     /// filled_groups is used to let the writer know how many groups already have content (can be 0 if starting from scratch)
     pub fn create_write(
         file: &'a mut RS,
-        h3: &'a mut [u8; 0x18000],
         data_offset: u64,
         encryption_key: [u8; 16],
         max_group: Option<u64>,
@@ -413,28 +427,30 @@ impl<'a, RS: Write + Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
             .unwrap();
         WiiEncryptedReadWriteStream {
             file,
-            h3: Some(h3),
-            data_offset,
-            encryption_key,
-            open_mode: OpenMode::ReadWrite { max_group },
-            current_group: None,
-            group_cache,
-            is_dirty: false,
-            current_position: 0,
-            filled_groups,
+            inner: WiiEncryptedReadWriteStreamInner {
+                h3: Some(vec![0; 0x18000].into_boxed_slice().try_into().unwrap()),
+                data_offset,
+                encryption_key,
+                open_mode: OpenMode::ReadWrite { max_group },
+                current_group: None,
+                group_cache,
+                is_dirty: false,
+                current_position: 0,
+                filled_groups,
+            }
         }
     }
 }
 
 impl<'a, RS: Read + Seek> Read for WiiEncryptedReadWriteStream<'a, RS> {
     fn read(&mut self, mut buf: &mut [u8]) -> io::Result<usize> {
-        let max_size = self.open_mode.get_max_size();
-        let mut group = self.current_position / GROUP_DATA_SIZE;
-        let mut block = (self.current_position % GROUP_DATA_SIZE) / BLOCK_DATA_SIZE;
-        let mut offset_in_block_data = self.current_position % BLOCK_DATA_SIZE;
+        let max_size = self.inner.open_mode.get_max_size();
+        let mut group = self.inner.current_position / GROUP_DATA_SIZE;
+        let mut block = (self.inner.current_position % GROUP_DATA_SIZE) / BLOCK_DATA_SIZE;
+        let mut offset_in_block_data = self.inner.current_position % BLOCK_DATA_SIZE;
         let mut read_bytes = 0;
         while !buf.is_empty() {
-            if max_size.map_or(false, |size| self.current_position >= size) {
+            if max_size.map_or(false, |size| self.inner.current_position >= size) {
                 break;
             }
             // we either copy the entire block or what's needed to fill the vec
@@ -445,7 +461,7 @@ impl<'a, RS: Read + Seek> Read for WiiEncryptedReadWriteStream<'a, RS> {
                 &self.get_decrypted_block_data(group, block)?[offset_in_block_data as usize..]
                     [..count_to_copy as usize],
             );
-            self.current_position += count_to_copy;
+            self.inner.current_position += count_to_copy;
             read_bytes += count_to_copy;
             offset_in_block_data = 0;
             block += 1;
@@ -460,38 +476,38 @@ impl<'a, RS: Read + Seek> Read for WiiEncryptedReadWriteStream<'a, RS> {
 
 impl<'a, WS: Write + Read + Seek> Write for WiiEncryptedReadWriteStream<'a, WS> {
     fn write(&mut self, mut buf: &[u8]) -> io::Result<usize> {
-        match &self.open_mode {
+        match &self.inner.open_mode {
             OpenMode::Readonly { .. } => Err(io::ErrorKind::Unsupported.into()),
             &OpenMode::ReadWrite { max_group, .. } => {
                 let mut bytes_written = 0;
-                let mut group = self.current_position / GROUP_DATA_SIZE;
-                let mut block = (self.current_position % GROUP_DATA_SIZE) / BLOCK_DATA_SIZE;
+                let mut group = self.inner.current_position / GROUP_DATA_SIZE;
+                let mut block = (self.inner.current_position % GROUP_DATA_SIZE) / BLOCK_DATA_SIZE;
                 let mut offset_in_block =
-                    BLOCK_DATA_OFFSET + (self.current_position % BLOCK_DATA_SIZE);
+                    BLOCK_DATA_OFFSET + (self.inner.current_position % BLOCK_DATA_SIZE);
                 while !buf.is_empty() {
                     if max_group.map_or(false, |g| g <= group) {
                         // we are above the limit
                         break;
                     }
                     // if we're not in the current group of the buffer anymore, load that group
-                    if let Some(current_group) = self.current_group {
+                    if let Some(current_group) = self.inner.current_group {
                         if current_group != group {
-                            if self.is_dirty {
+                            if self.inner.is_dirty {
                                 hash_encrypt_block(
-                                    &mut self.group_cache,
-                                    self.h3.as_mut().map(|h3| {
+                                    &mut self.inner.group_cache,
+                                    self.inner.h3.as_mut().map(|h3| {
                                         h3[20 * current_group as usize..][..20]
                                             .as_mut()
                                             .try_into()
                                             .unwrap()
                                     }),
-                                    &self.encryption_key,
+                                    &self.inner.encryption_key,
                                 );
                                 self.file.seek(SeekFrom::Start(
-                                    self.data_offset + GROUP_SIZE * current_group,
+                                    self.inner.data_offset + GROUP_SIZE * current_group,
                                 ))?;
-                                self.file.write_all(self.group_cache.as_ref())?;
-                                self.filled_groups = self.filled_groups.max(current_group);
+                                self.file.write_all(self.inner.group_cache.as_ref())?;
+                                self.inner.filled_groups = self.inner.filled_groups.max(current_group);
                             }
                             // we can skip loading the previous data if
                             // - we are at the start of a group and would completely overwrite it
@@ -499,19 +515,19 @@ impl<'a, WS: Write + Read + Seek> Write for WiiEncryptedReadWriteStream<'a, WS> 
                             if !((block == 0
                                 && offset_in_block == 0x400
                                 && buf.len() >= GROUP_DATA_SIZE as usize)
-                                || group > self.filled_groups)
+                                || group > self.inner.filled_groups)
                             {
                                 // TODO: you *could* seek an entire block ahead, in that case there
                                 // would be a completely empty block, but I guess that's fine?
-                                self.filled_groups = self.filled_groups.max(group);
+                                self.inner.filled_groups = self.inner.filled_groups.max(group);
                                 self.do_load_group(group)?;
                             }
                         }
                     }
-                    self.current_group = Some(group);
-                    self.is_dirty = true;
+                    self.inner.current_group = Some(group);
+                    self.inner.is_dirty = true;
                     let bytes_to_copy = (BLOCK_SIZE - offset_in_block).min(buf.len() as u64);
-                    self.group_cache[(block * BLOCK_SIZE + offset_in_block) as usize..]
+                    self.inner.group_cache[(block * BLOCK_SIZE + offset_in_block) as usize..]
                         [..bytes_to_copy as usize]
                         .copy_from_slice(&buf[..bytes_to_copy as usize]);
                     buf = &buf[bytes_to_copy as usize..];
@@ -523,35 +539,35 @@ impl<'a, WS: Write + Read + Seek> Write for WiiEncryptedReadWriteStream<'a, WS> 
                     }
                     offset_in_block = BLOCK_DATA_OFFSET;
                 }
-                self.current_position += bytes_written;
+                self.inner.current_position += bytes_written;
                 Ok(bytes_written as usize)
             }
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        match &self.open_mode {
+        match &self.inner.open_mode {
             OpenMode::Readonly { .. } => Err(io::ErrorKind::Unsupported.into()),
             OpenMode::ReadWrite { .. } => {
-                if let Some(current_group) = self.current_group {
-                    if self.is_dirty {
+                if let Some(current_group) = self.inner.current_group {
+                    if self.inner.is_dirty {
                         hash_encrypt_block(
-                            &mut self.group_cache,
-                            self.h3.as_mut().map(|h3| {
+                            &mut self.inner.group_cache,
+                            self.inner.h3.as_mut().map(|h3| {
                                 h3[20 * current_group as usize..][..20]
                                     .as_mut()
                                     .try_into()
                                     .unwrap()
                             }),
-                            &self.encryption_key,
+                            &self.inner.encryption_key,
                         );
                         self.file.seek(SeekFrom::Start(
-                            self.data_offset + GROUP_SIZE * current_group,
+                            self.inner.data_offset + GROUP_SIZE * current_group,
                         ))?;
-                        self.file.write_all(self.group_cache.as_ref())?;
-                        self.filled_groups = self.filled_groups.max(current_group);
+                        self.file.write_all(self.inner.group_cache.as_ref())?;
+                        self.inner.filled_groups = self.inner.filled_groups.max(current_group);
                         self.file.flush()?;
-                        self.current_group = None;
+                        self.inner.current_group = None;
                     }
                 }
                 Ok(())
@@ -563,17 +579,17 @@ impl<'a, WS: Write + Read + Seek> Write for WiiEncryptedReadWriteStream<'a, WS> 
 impl<'a, RS: Read + Seek> Seek for WiiEncryptedReadWriteStream<'a, RS> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let new_pos = match pos {
-            SeekFrom::Current(off) => self.current_position as i64 + off,
+            SeekFrom::Current(off) => self.inner.current_position as i64 + off,
             SeekFrom::Start(off) => off as i64,
             // TODO: support seeking from the end when it's known?
             SeekFrom::End(_off) => return Err(io::Error::from(io::ErrorKind::Unsupported)),
         };
-        self.current_position = new_pos.max(0) as u64;
-        Ok(self.current_position)
+        self.inner.current_position = new_pos.max(0) as u64;
+        Ok(self.inner.current_position)
     }
 
     fn stream_position(&mut self) -> io::Result<u64> {
-        Ok(self.current_position)
+        Ok(self.inner.current_position)
     }
 }
 
@@ -591,12 +607,10 @@ mod test {
     #[test]
     fn test_write() {
         // let mut h3 = Box::new([0u8; 0x18000]);
-        let mut h3: Box<[u8; 0x18000]> = vec![0u8; 0x18000].into_boxed_slice().try_into().unwrap();
         let mut disc_buf: Vec<u8> = Vec::with_capacity(GROUP_SIZE as usize * 4);
         let mut cur = Cursor::new(&mut disc_buf);
         let mut encrypt_write = WiiEncryptedReadWriteStream::create_write(
             &mut cur,
-            &mut h3,
             0,
             [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
             None,

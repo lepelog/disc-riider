@@ -132,7 +132,7 @@ fn main() -> Result<(), MyError> {
                 .write(true)
                 .create(true)
                 .open(&dest_file)?;
-            builder::build_from_directory(&src_dir, &mut f).map_err(|e| format!("{e:?}"))?;
+            builder::build_from_directory(&src_dir, &mut f, &mut |_| -> () {}).map_err(|e| format!("{e:?}"))?;
         }
     }
     Ok(())

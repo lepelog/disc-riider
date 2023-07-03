@@ -16,4 +16,4 @@ thiserror = "1.0.32"
 sha1 = "0.10.1"
 
 [workspace]
-members = [".", "./iso-tool"]
+members = [".", "./iso-tool", "disc-riider-py"]

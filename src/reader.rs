@@ -32,7 +32,7 @@ impl<RS: Read + Seek> WiiIsoReader<RS> {
         })
     }
 
-    pub fn partitions(&self) -> &Vec<WiiPartTableEntry> {
+    pub fn partitions(&self) -> &[WiiPartTableEntry] {
         &self.partitions
     }
 
