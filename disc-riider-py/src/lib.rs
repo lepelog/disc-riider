@@ -1,8 +1,8 @@
-use std::{path::{PathBuf, Path}, fs::{self, create_dir_all, OpenOptions}, convert::Infallible, io::{Read, Write, Seek, SeekFrom}, fmt::format, collections::HashMap};
+use std::{path::{PathBuf, Path}, fs::{self, create_dir_all, OpenOptions}, convert::Infallible, io::{Read, Write, Seek, SeekFrom}};
 
 use binrw::{BinWrite, BinWriterExt};
-use disc_riider::{structs::WiiPartType, reader_writer::WiiEncryptedReadWriteStreamInner, Fst, WiiIsoReader, partition_rw::PartitionReader, FstNode, builder::build_from_directory};
-use pyo3::{prelude::*, exceptions, types::PyFunction};
+use disc_riider::{structs::WiiPartType, reader_writer::WiiEncryptedReadWriteStreamInner, Fst, WiiIsoReader, FstNode, builder::build_from_directory};
+use pyo3::{prelude::*, exceptions};
 use sha1::{Sha1, Digest};
 
 trait PyErrIoExt<T> {
