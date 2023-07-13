@@ -1,14 +1,14 @@
 use std::{
     fs::{create_dir_all, File},
     io::{self, Read, Seek, SeekFrom, Write},
-    path::{Path, PathBuf},
+    path::{Path},
 };
 
 use aes::{
     cipher::{block_padding::NoPadding, BlockDecryptMut, KeyIvInit},
     Aes128,
 };
-use binrw::{BinReaderExt, BinWrite, BinWriterExt};
+use binrw::{BinReaderExt, BinWriterExt};
 
 use crate::{
     structs::{
@@ -337,33 +337,19 @@ impl WiiPartitionReadInfo {
         path: &Path,
         reader: &mut WiiIsoReader<RS>,
     ) -> binrw::BinResult<()> {
-        fn write_binrw<B: BinWrite>(
-            sys_foler: &PathBuf,
-            filename: &str,
-            data: &B,
-        ) -> binrw::BinResult<()>
-        where
-            <B as BinWrite>::Args: Default,
-        {
-            let mut path = sys_foler.clone();
-            path.push(filename);
-            let mut f = File::create(path)?;
-            f.write_be(data)?;
-            f.flush()?;
-            Ok(())
-        }
         fn write_file(sys_folder: &Path, filename: &str, data: &[u8]) -> io::Result<()> {
-            let mut path = sys_folder.to_path_buf();
-            path.push(filename);
-            let mut f = File::create(path)?;
+            let mut f = File::create(sys_folder.join(filename))?;
             f.write_all(data)?;
             f.flush()?;
             Ok(())
         }
-        let mut sys_folder = PathBuf::from(path);
-        sys_folder.push("sys");
+        let sys_folder = path.join("sys");
         create_dir_all(&sys_folder)?;
-        write_binrw(&sys_folder, "boot.bin", &self.encrypted_header)?;
+        let boot_path = sys_folder.join("boot.bin");
+        let mut f = File::create(boot_path)?;
+        f.write_be(&self.encrypted_header)?;
+        f.flush()?;
+        drop(f);
         write_file(&sys_folder, "bi2.bin", &self.read_bi2(reader)?)?;
         write_file(&sys_folder, "apploader.img", &self.read_apploader(reader)?)?;
         write_file(&sys_folder, "main.dol", &self.read_dol(reader)?)?;

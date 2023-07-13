@@ -8,5 +8,5 @@ edition = "2021"
 [dependencies]
 disc_riider = { path = ".." }
 clap = { version = "3.2.8", features = ["derive"] }
-thiserror = "1.0.32"
-binrw = "0.10.0"
+thiserror = "1.0.40"
+binrw = "0.11.2"

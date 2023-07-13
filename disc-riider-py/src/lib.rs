@@ -76,7 +76,7 @@ impl WiiIsoExtractor {
     }
 }
 
-pub fn binrw_write_file(p: &Path, value: &impl BinWrite<Args = ()>) -> PyResult<()> {
+pub fn binrw_write_file(p: &Path, value: &impl for<'a> BinWrite<Args<'a> = ()>) -> PyResult<()> {
     let mut f = fs::File::create(p).into_pyerr_with_path(p)?;
     f.write_be(value).into_pyerr_with_path(p)?;
     Ok(())
