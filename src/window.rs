@@ -1,62 +1,104 @@
 use std::io::{self, Read, Seek, SeekFrom, Write};
 
-pub struct IOWindow<'a, R> {
-    source: &'a mut R,
+pub struct IOWindow<R: Seek> {
+    source: R,
     pos: u64,
     start: u64,
+    length: Option<u64>,
+    needs_seek: bool,
 }
 
-impl<'a, R> IOWindow<'a, R>
+impl<R> IOWindow<R>
 where
     R: Seek,
 {
-    pub fn new(source: &'a mut R, start: u64) -> io::Result<Self> {
-        let mut window = IOWindow {
+    pub fn new(source: R, start: u64, length: Option<u64>) -> Self {
+        IOWindow {
             source,
             start,
             pos: 0,
-        };
-        window.seek(SeekFrom::Start(0))?;
-        Ok(window)
+            length,
+            needs_seek: true,
+        }
+    }
+
+    fn ensure_seeked(&mut self) -> io::Result<()> {
+        if self.needs_seek {
+            self.source
+                .seek(SeekFrom::Start(self.pos + self.start))
+                .map(drop)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn bytes_left(&self) -> Option<usize> {
+        self.length
+            .map(|length| length.saturating_sub(self.pos) as usize)
     }
 }
 
-impl<'a, R> Read for IOWindow<'a, R>
+impl<R> Read for IOWindow<R>
 where
     R: Read + Seek,
 {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    fn read(&mut self, mut buf: &mut [u8]) -> io::Result<usize> {
+        self.ensure_seeked()?;
+        if let Some(bytes_left) = self.bytes_left() {
+            let new_len = bytes_left.min(buf.len());
+            buf = &mut buf[..new_len];
+        }
         match self.source.read(buf) {
             Ok(amt) => {
                 self.pos += amt as u64;
                 Ok(amt)
             }
-            e => e,
+            e => {
+                self.needs_seek = true;
+                e
+            }
         }
     }
 
     fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        if let Some(bytes_left) = self.bytes_left() {
+            if bytes_left > buf.len() {
+                return Err(io::ErrorKind::UnexpectedEof.into());
+            }
+        }
+        self.ensure_seeked()?;
         match self.source.read_exact(buf) {
             Ok(()) => {
                 self.pos += buf.len() as u64;
                 Ok(())
             }
-            e => e,
+            e => {
+                self.needs_seek = true;
+                e
+            }
         }
     }
 }
 
-impl<'a, R> Write for IOWindow<'a, R>
+impl<R> Write for IOWindow<R>
 where
     R: Write + Seek,
 {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    fn write(&mut self, mut buf: &[u8]) -> io::Result<usize> {
+        self.ensure_seeked()?;
+        if let Some(bytes_left) = self.bytes_left() {
+            let new_len = bytes_left.min(buf.len());
+            buf = &buf[..new_len];
+        }
         match self.source.write(buf) {
             Ok(amt) => {
                 self.pos += amt as u64;
                 Ok(amt)
             }
-            e => e,
+            e => {
+                self.needs_seek = true;
+                e
+            }
         }
     }
 
@@ -65,14 +107,20 @@ where
     }
 }
 
-impl<'a, R> Seek for IOWindow<'a, R>
+impl<R> Seek for IOWindow<R>
 where
     R: Seek,
 {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let position = self.source.seek(match pos {
             SeekFrom::Current(_) => pos,
-            SeekFrom::End(_off) => return Err(io::ErrorKind::Unsupported.into()),
+            SeekFrom::End(off) => {
+                if let Some(length) = self.length {
+                    SeekFrom::Start((self.start + length).saturating_add_signed(off))
+                } else {
+                    return Err(io::ErrorKind::Unsupported.into());
+                }
+            }
             SeekFrom::Start(off) => SeekFrom::Start(self.start + off),
         })?;
         self.pos = position.saturating_sub(self.start);
@@ -87,7 +135,10 @@ where
 #[cfg(test)]
 mod test {
     use binrw::BinReaderExt;
-    use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+    use std::{
+        array,
+        io::{Cursor, ErrorKind, Read, Seek, SeekFrom, Write},
+    };
 
     use crate::IOWindow;
 
@@ -95,7 +146,7 @@ mod test {
     pub fn test_window() {
         let mut buf = vec![0u8; 10];
         let mut cur = Cursor::new(&mut buf);
-        let mut win = IOWindow::new(&mut cur, 2).unwrap();
+        let mut win = IOWindow::new(&mut cur, 2, None);
         assert_eq!(win.stream_position().unwrap(), 0);
         win.seek(SeekFrom::Start(3)).unwrap();
         assert_eq!(win.stream_position().unwrap(), 3);
@@ -106,5 +157,24 @@ mod test {
         let mut result = [0; 3];
         assert_eq!(win.read(&mut result).unwrap(), 3);
         assert_eq!(result, [1, 2, 3]);
+        assert_eq!(
+            win.seek(SeekFrom::End(0)).unwrap_err().kind(),
+            ErrorKind::Unsupported
+        );
+    }
+
+    #[test]
+    pub fn test_window_with_len() {
+        let buf: [u8; 20] = array::from_fn(|v| v as u8);
+        let mut cur = Cursor::new(&buf);
+        let mut win = IOWindow::new(&mut cur, 10, Some(3));
+        assert_eq!(win.stream_position().unwrap(), 0);
+        win.seek(SeekFrom::Start(3)).unwrap();
+        assert_eq!(win.stream_position().unwrap(), 3);
+        win.seek(SeekFrom::End(-3)).unwrap();
+        assert_eq!(win.stream_position().unwrap(), 0);
+        let mut read_buf = [0; 10];
+        assert_eq!(win.read(&mut read_buf).unwrap(), 3);
+        assert_eq!(read_buf[..3], [10, 11, 12])
     }
 }

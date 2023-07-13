@@ -3,20 +3,20 @@ use std::ops::Deref;
 use binrw::binrw;
 
 pub mod builder;
-pub mod dir_reader;
+mod dir_reader;
 mod fst;
-pub mod partition_rw;
-pub mod reader;
-pub mod reader_writer;
+mod reader_writer;
 pub mod structs;
 mod window;
 
+mod new_reader;
+
 pub use fst::{Fst, FstNode, FstToBytes};
-pub use reader::WiiIsoReader;
+pub use new_reader::{CryptPartReader, WiiIsoReader, WiiPartitionReadInfo};
 pub use window::IOWindow;
 
 #[rustfmt::skip]
-const COMMON_KEYS: [[u8; 16]; 2] = [
+pub const COMMON_KEYS: [[u8; 16]; 2] = [
     /* Normal */
     [0xeb, 0xe4, 0x2a, 0x22, 0x5e, 0x85, 0x93, 0xe4, 0x48, 0xd9, 0xc5, 0x45, 0x73, 0x81, 0xaa, 0xf7],
     /* Korean */

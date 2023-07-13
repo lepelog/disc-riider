@@ -1,22 +1,14 @@
-use std::{
-    fs::{create_dir_all, File},
-    io::{self, Read, Seek, SeekFrom, Write},
-    path::{Path, PathBuf},
-};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 
 use aes::{
     cipher::{block_padding::NoPadding, BlockEncryptMut},
     cipher::{BlockDecryptMut, KeyIvInit},
     Aes128,
 };
-use binrw::{BinReaderExt, BinWrite, BinWriterExt};
 use sha1::{Digest, Sha1};
 use thiserror::Error;
 
-use crate::{
-    structs::{ApploaderHeader, DOLHeader, DiscHeader},
-    BLOCK_DATA_OFFSET, BLOCK_DATA_SIZE, BLOCK_SIZE, GROUP_DATA_SIZE, GROUP_SIZE,
-};
+use crate::{BLOCK_DATA_OFFSET, BLOCK_DATA_SIZE, BLOCK_SIZE, GROUP_DATA_SIZE, GROUP_SIZE};
 
 type Aes128CbcEnc = cbc::Encryptor<Aes128>;
 type Aes128CbcDec = cbc::Decryptor<Aes128>;
@@ -65,7 +57,10 @@ pub struct WiiEncryptedReadWriteStreamInner {
 }
 
 impl WiiEncryptedReadWriteStreamInner {
-    pub fn with_file<'a, RS: Read + Seek>(self, file: &'a mut RS) -> WiiEncryptedReadWriteStream<'a, RS> {
+    pub fn with_file<'a, RS: Read + Seek>(
+        self,
+        file: &'a mut RS,
+    ) -> WiiEncryptedReadWriteStream<'a, RS> {
         WiiEncryptedReadWriteStream { inner: self, file }
     }
 }
@@ -212,10 +207,6 @@ fn decrypt_verify_group(
 }
 
 impl<'a, RS: Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
-    pub fn into_inner(self) -> WiiEncryptedReadWriteStreamInner {
-        self.inner
-    }
-
     pub fn take_h3(&mut self) -> Option<Box<[u8; 0x18000]>> {
         self.inner.h3.take()
     }
@@ -244,7 +235,7 @@ impl<'a, RS: Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
                 current_position: 0,
                 // not relevant for readonly
                 filled_groups: 0,
-            }
+            },
         }
     }
     // loads an entire group into cache and decrypts it
@@ -317,97 +308,6 @@ impl<'a, RS: Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
         }
         Ok(())
     }
-
-    pub fn get_filled_groups(&self) -> u64 {
-        self.inner.filled_groups
-    }
-
-    pub fn read_apploader(&mut self) -> binrw::BinResult<Vec<u8>> {
-        self.seek(SeekFrom::Start(0x2440))?;
-        let apploader_header: ApploaderHeader = self.read_be()?;
-        let fullsize = 32 + apploader_header.size1 + apploader_header.size2;
-        let mut buf = Vec::new();
-        self.read_into_vec(0x2440, fullsize as u64, &mut buf)?;
-        Ok(buf)
-    }
-
-    pub fn read_dol(&mut self, dol_offset: u64) -> binrw::BinResult<Vec<u8>> {
-        self.seek(SeekFrom::Start(dol_offset))?;
-        let dol_header = self.read_be::<DOLHeader>()?;
-        let mut dol_size = dol_header.text_off[0];
-        dol_size = dol_size.saturating_add(
-            dol_header
-                .text_sizes
-                .iter()
-                .chain(dol_header.data_sizes.iter())
-                .cloned()
-                .reduce(|accum, item| accum.saturating_add(item))
-                .unwrap(),
-        );
-        if dol_size == u32::MAX {
-            Err(binrw::Error::Custom {
-                pos: dol_offset,
-                err: Box::new("overflow calculating dol size!"),
-            })
-        } else {
-            let mut out_buf = Vec::new();
-            self.read_into_vec(dol_offset, dol_size as u64, &mut out_buf)?;
-            Ok(out_buf)
-        }
-    }
-
-    pub fn read_disc_header(&mut self) -> binrw::BinResult<DiscHeader> {
-        self.seek(SeekFrom::Start(0))?;
-        self.read_be()
-    }
-
-    pub fn extract_system_files(&mut self, path: &Path) -> binrw::BinResult<()> {
-        fn write_binrw<B: BinWrite>(
-            sys_foler: &PathBuf,
-            filename: &str,
-            data: &B,
-        ) -> binrw::BinResult<()>
-        where
-            <B as BinWrite>::Args: Default,
-        {
-            let mut path = sys_foler.clone();
-            path.push(filename);
-            let mut f = File::create(path)?;
-            f.write_be(data)?;
-            f.flush()?;
-            Ok(())
-        }
-        fn write_file(sys_folder: &Path, filename: &str, data: &[u8]) -> io::Result<()> {
-            let mut path = sys_folder.to_path_buf();
-            path.push(filename);
-            let mut f = File::create(path)?;
-            f.write_all(data)?;
-            f.flush()?;
-            Ok(())
-        }
-        let mut sys_folder = PathBuf::from(path);
-        sys_folder.push("sys");
-        create_dir_all(&sys_folder)?;
-        // read header
-        let disc_header: DiscHeader = self.read_disc_header()?;
-        write_binrw(&sys_folder, "boot.bin", &disc_header)?;
-        let mut bi2 = vec![0; 0x2000];
-        self.read_exact(&mut bi2)?;
-        write_file(&sys_folder, "bi2.bin", &bi2)?;
-        println!("{:?}", self.stream_position());
-        let apploader = self.read_apploader()?;
-        write_file(&sys_folder, "apploader.img", &apploader)?;
-        let dol = self.read_dol(*disc_header.dol_off)?;
-        write_file(&sys_folder, "main.dol", &dol)?;
-        let mut fst_buf = Vec::new();
-        self.read_into_vec(
-            *disc_header.fst_off,
-            *disc_header.fst_sz as u64,
-            &mut fst_buf,
-        )?;
-        write_file(&sys_folder, "fst.bin", &fst_buf)?;
-        Ok(())
-    }
 }
 
 impl<'a, RS: Write + Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
@@ -437,7 +337,7 @@ impl<'a, RS: Write + Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
                 is_dirty: false,
                 current_position: 0,
                 filled_groups,
-            }
+            },
         }
     }
 }
@@ -507,7 +407,8 @@ impl<'a, WS: Write + Read + Seek> Write for WiiEncryptedReadWriteStream<'a, WS> 
                                     self.inner.data_offset + GROUP_SIZE * current_group,
                                 ))?;
                                 self.file.write_all(self.inner.group_cache.as_ref())?;
-                                self.inner.filled_groups = self.inner.filled_groups.max(current_group);
+                                self.inner.filled_groups =
+                                    self.inner.filled_groups.max(current_group);
                             }
                             // we can skip loading the previous data if
                             // - we are at the start of a group and would completely overwrite it

@@ -1,5 +1,5 @@
 use clap::Parser;
-use disc_riider::{builder, structs::WiiPartType, Fst, WiiIsoReader};
+use disc_riider::{builder, structs::WiiPartType, WiiIsoReader};
 use std::{
     fs::{File, OpenOptions},
     path::PathBuf,
@@ -29,17 +29,6 @@ enum Commands {
         src_dir: PathBuf,
         dest_file: PathBuf,
     },
-}
-
-impl Commands {
-    fn get_filename(&self) -> &PathBuf {
-        match self {
-            Self::Sections { filename } => filename,
-            Self::ExtractSys { filename, .. } => filename,
-            Self::PrintFiles { filename, .. } => filename,
-            Self::Rebuild { dest_file, .. } => dest_file,
-        }
-    }
 }
 
 #[derive(Error, Debug)]
@@ -73,14 +62,14 @@ fn main() -> Result<(), MyError> {
     match args {
         Commands::Sections { filename } => {
             let f = File::open(filename)?;
-            let reader = WiiIsoReader::create(f)?;
+            let reader = WiiIsoReader::open(f)?;
             for partition in reader.partitions() {
-                println!("{:?}: {:X}", partition.part_type, *partition.part_data_off);
+                println!("{:?}: {:X}", partition.get_type(), partition.get_offset());
             }
         }
         Commands::PrintFiles { section, filename } => {
             let f = File::open(filename)?;
-            let mut reader = WiiIsoReader::create(f)?;
+            let mut reader = WiiIsoReader::open(f)?;
             let part_type = match section.to_ascii_uppercase().as_str() {
                 "DATA" => WiiPartType::Data,
                 "CHANNEL" => WiiPartType::Channel,
@@ -92,14 +81,11 @@ fn main() -> Result<(), MyError> {
             let partition = reader
                 .partitions()
                 .iter()
-                .find(|p| p.part_type == part_type)
+                .find(|p| p.get_type() == part_type)
                 .cloned()
                 .ok_or_else(|| MyError::SectionNotFound(part_type))?;
-            let mut part_reader = reader.open_partition_stream(&part_type)?;
-            let mut encr_reader = part_reader.open_encryption_reader();
-            let disc_header = encr_reader.read_disc_header()?;
-            let fst = Fst::read(&mut encr_reader, *disc_header.fst_off)?;
-            fst.print_tree();
+            let part_reader = reader.open_partition(partition)?;
+            part_reader.get_fst().print_tree();
         }
         Commands::ExtractSys {
             section,
@@ -107,7 +93,7 @@ fn main() -> Result<(), MyError> {
             filename,
         } => {
             let f = File::open(filename)?;
-            let mut reader = WiiIsoReader::create(f)?;
+            let mut reader = WiiIsoReader::open(f)?;
             let part_type = match section.to_ascii_uppercase().as_str() {
                 "DATA" => WiiPartType::Data,
                 "CHANNEL" => WiiPartType::Channel,
@@ -117,13 +103,12 @@ fn main() -> Result<(), MyError> {
             let partition = reader
                 .partitions()
                 .iter()
-                .find(|p| p.part_type == part_type)
+                .find(|p| p.get_type() == part_type)
                 .cloned()
                 .ok_or_else(|| MyError::SectionNotFound(part_type))?;
 
-            let mut part_reader = reader.open_partition_stream(&WiiPartType::Data)?;
-            let mut encrytion_reader = part_reader.open_encryption_reader();
-            encrytion_reader.extract_system_files(&destination)?;
+            let mut part_reader = reader.open_partition(partition)?;
+            part_reader.extract_system_files(&destination, &mut reader)?;
         }
         Commands::Rebuild { src_dir, dest_file } => {
             let mut f = OpenOptions::new()
@@ -132,7 +117,8 @@ fn main() -> Result<(), MyError> {
                 .write(true)
                 .create(true)
                 .open(&dest_file)?;
-            builder::build_from_directory(&src_dir, &mut f, &mut |_| -> () {}).map_err(|e| format!("{e:?}"))?;
+            builder::build_from_directory(&src_dir, &mut f, &mut |_| -> () {})
+                .map_err(|e| format!("{e:?}"))?;
         }
     }
     Ok(())

@@ -17,6 +17,8 @@ pub enum BuildDirError {
     DuplicateFilename(String),
     #[error("required file not found: {0}")]
     NotFound(PathBuf),
+    #[error("File {0} is too large, has {1} bytes")]
+    FileTooLarge(PathBuf, u64),
 }
 
 pub fn build_fst_from_directory_tree<P: AsRef<Path> + ?Sized>(
@@ -36,27 +38,34 @@ fn build_fst_from_directory_tree_rec<P: AsRef<Path> + ?Sized>(
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let os_filename = entry.file_name();
-        let filename = if let Some(name) = os_filename.to_str().map(|s| s.to_string()) {
-            name
-        } else {
+        let Some(filename) = os_filename.to_str().map(String::from) else {
             return Err(BuildDirError::InvalidFilename(os_filename));
         };
-        if entry.metadata()?.is_dir() {
+        let path = entry.path();
+        let metadata = fs::metadata(&path)?;
+        if metadata.is_dir() {
             // directories, push them to the dir stack
             dirs.push(filename);
-            build_fst_from_directory_tree_rec(&entry.path(), dirs, fst)?;
+            build_fst_from_directory_tree_rec(&path, dirs, fst)?;
             let _ = dirs.pop();
         } else {
             // files, add them to the fst
             if !matches!(
                 fst.add_node_iter(
                     dirs.iter().map(|s| s.as_str()),
-                    FstNode::create_file(filename)
+                    FstNode::File {
+                        name: filename,
+                        offset: 0,
+                        length: metadata
+                            .len()
+                            .try_into()
+                            .map_err(|_| BuildDirError::FileTooLarge(path, metadata.len()))?
+                    }
                 ),
                 Ok(None)
             ) {
                 return Err(BuildDirError::DuplicateFilename(
-                    os_filename.to_str().unwrap().to_string(),
+                    os_filename.to_str().unwrap_or_default().to_string(),
                 ));
             }
         }

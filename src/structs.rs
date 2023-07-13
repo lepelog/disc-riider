@@ -57,8 +57,18 @@ enum KeyType {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[binrw]
 pub struct WiiPartTableEntry {
-    pub part_data_off: ShiftedU64,
-    pub part_type: WiiPartType,
+    pub(crate) part_data_off: ShiftedU64,
+    pub(crate) part_type: WiiPartType,
+}
+
+impl WiiPartTableEntry {
+    pub fn get_offset(&self) -> u64 {
+        *self.part_data_off
+    }
+
+    pub fn get_type(&self) -> WiiPartType {
+        self.part_type
+    }
 }
 
 pub fn read_parts<RS: Read + Seek>(r: &mut RS) -> binrw::BinResult<Vec<WiiPartTableEntry>> {
@@ -69,7 +79,6 @@ pub fn read_parts<RS: Read + Seek>(r: &mut RS) -> binrw::BinResult<Vec<WiiPartTa
     for _ in 0..4 {
         let part_count = r.read_be::<u32>()?;
         let offset = read_u64_shifted(r)?;
-        println!("{}", offset);
         if part_count > 0 {
             let pos = r.stream_position()?;
             r.seek(SeekFrom::Start(offset))?;
