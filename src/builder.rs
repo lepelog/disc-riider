@@ -218,8 +218,14 @@ impl<WS: Read + Write + Seek> WiiDiscBuilder<WS> {
                     progress_cb(done_percent);
                 }
             }
-            let next_start = align_next(crypto_writer.stream_position()? + padding as u64, 0x40);
-            crypto_writer.seek(SeekFrom::Start(next_start))?;
+            const ZEROS: [u8; 0x40] = [0; 0x40];
+            let mut current_position = crypto_writer.stream_position()?;
+            let next_start = align_next(current_position + padding as u64, 0x40);
+            while current_position < next_start {
+                let bytes_to_write = ((next_start - current_position) as usize).min(ZEROS.len());
+                current_position += bytes_to_write as u64;
+                crypto_writer.write_all(&ZEROS[..bytes_to_write])?;
+            }
             if !uses_file_byte_progress {
                 let done_percent = ((processed_files as f64) / (total_files as f64) * 100f64) as u8;
                 progress_cb(done_percent);
