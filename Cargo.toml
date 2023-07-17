@@ -1,6 +1,6 @@
 [package]
 name = "disc_riider"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "library to read/build wii ISOs, focussed on being used in patching an ISO for randomizers"
 license = "MIT"
