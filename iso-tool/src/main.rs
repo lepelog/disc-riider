@@ -117,7 +117,9 @@ fn main() -> Result<(), MyError> {
                 .write(true)
                 .create(true)
                 .open(&dest_file)?;
-            builder::build_from_directory(&src_dir, &mut f, &mut |_| -> () {})
+            builder::build_from_directory(&src_dir, &mut f, &mut |percent| -> () {
+                println!("rebuilding... {}%", percent);
+            })
                 .map_err(|e| format!("{e:?}"))?;
         }
     }
