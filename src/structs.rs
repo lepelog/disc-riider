@@ -12,7 +12,7 @@ use crate::{ShiftedU64, COMMON_KEYS};
 type Aes128CbcDec = cbc::Decryptor<Aes128>;
 type Aes128CbcEnc = cbc::Encryptor<Aes128>;
 
-pub fn read_u64_shifted<R: Read + Seek>(r: &mut R) -> binrw::BinResult<u64> {
+pub(crate) fn read_u64_shifted<R: Read + Seek>(r: &mut R) -> binrw::BinResult<u64> {
     Ok((r.read_be::<u32>()? as u64) << 2)
 }
 
@@ -40,7 +40,7 @@ impl WiiPartType {
 #[derive(Debug, PartialEq, Clone, Copy)]
 #[binrw]
 #[brw(repr = u32)]
-enum SigType {
+pub enum SigType {
     Rsa4096 = 0x00010000,
     Rsa2048 = 0x00010001,
     EllipticalCurve = 0x00010002,
@@ -49,7 +49,7 @@ enum SigType {
 #[derive(Debug, PartialEq, Clone, Copy)]
 #[binrw]
 #[brw(repr = u32)]
-enum KeyType {
+pub enum KeyType {
     Rsa4096 = 0x00000000,
     Rsa2048 = 0x00000001,
 }
@@ -71,7 +71,7 @@ impl WiiPartTableEntry {
     }
 }
 
-pub fn read_parts<RS: Read + Seek>(r: &mut RS) -> binrw::BinResult<Vec<WiiPartTableEntry>> {
+pub(crate) fn read_parts<RS: Read + Seek>(r: &mut RS) -> binrw::BinResult<Vec<WiiPartTableEntry>> {
     r.seek(SeekFrom::Start(0x40000))?;
     let mut parts = Vec::new();
     // 4 tables
@@ -93,9 +93,9 @@ pub fn read_parts<RS: Read + Seek>(r: &mut RS) -> binrw::BinResult<Vec<WiiPartTa
 
 #[derive(Clone, Debug, PartialEq)]
 #[binrw]
-struct TicketTimeLimit {
-    enable_time_limit: u32,
-    time_limit: u32,
+pub struct TicketTimeLimit {
+    pub enable_time_limit: u32,
+    pub time_limit: u32,
 }
 
 fn decrypt_title_key(key: &[u8; 16], common_key_idx: u8, title_id: &[u8; 8]) -> [u8; 16] {
@@ -121,29 +121,29 @@ fn encrypt_title_key(key: &[u8; 16], common_key_idx: u8, title_id: &[u8; 8]) -> 
 #[binrw]
 #[derive(Clone, PartialEq, Debug)]
 pub struct Ticket {
-    sig_type: SigType,
-    sig: [u8; 0x100],
+    pub sig_type: SigType,
+    pub sig: [u8; 0x100],
     #[brw(pad_before = 60)]
-    sig_issuer: [u8; 0x40],
-    ecdh: [u8; 0x3C],
+    pub sig_issuer: [u8; 0x40],
+    pub ecdh: [u8; 0x3C],
     #[brw(pad_before = 3)]
     #[br(temp)]
     #[bw(calc = encrypt_title_key(title_key, *common_key_idx, title_id))]
     encrypted_key: [u8; 16],
     #[brw(pad_before = 1)]
-    ticket_id: [u8; 8],
-    console_id: [u8; 4],
-    title_id: [u8; 8],
-    unk: u16,
-    ticket_version: u16,
-    permitted_titles_mask: u32,
-    permit_mask: u32,
-    title_export_allowed: u8,
-    common_key_idx: u8,
+    pub ticket_id: [u8; 8],
+    pub console_id: [u8; 4],
+    pub title_id: [u8; 8],
+    pub unk: u16,
+    pub ticket_version: u16,
+    pub permitted_titles_mask: u32,
+    pub permit_mask: u32,
+    pub title_export_allowed: u8,
+    pub common_key_idx: u8,
     #[brw(pad_before = 48)]
-    content_access_permissions: [u8; 0x40],
-    unk2: u16,
-    time_limits: [TicketTimeLimit; 8],
+    pub content_access_permissions: [u8; 0x40],
+    pub unk2: u16,
+    pub time_limits: [TicketTimeLimit; 8],
     #[bw(ignore)]
     #[br(calc = decrypt_title_key(&encrypted_key, common_key_idx, &title_id))]
     pub title_key: [u8; 16],
@@ -152,60 +152,60 @@ pub struct Ticket {
 #[binrw]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TMDContent {
-    id: u32,
-    index: u16,
-    content_type: u16,
-    size: u64,
-    hash: [u8; 20],
+    pub id: u32,
+    pub index: u16,
+    pub content_type: u16,
+    pub size: u64,
+    pub hash: [u8; 20],
 }
 
 #[binrw]
 #[derive(Clone, Debug, PartialEq)]
 pub struct TMD {
-    sig_type: SigType,
-    sig: [u8; 0x100],
+    pub sig_type: SigType,
+    pub sig: [u8; 0x100],
     #[brw(pad_before = 60)]
-    sig_issuer: [u8; 0x40],
-    version: u8,
-    ca_crl_version: u8,
-    signer_crl_version: u8,
+    pub sig_issuer: [u8; 0x40],
+    pub version: u8,
+    pub ca_crl_version: u8,
+    pub signer_crl_version: u8,
     #[brw(pad_before = 1)]
-    ios_id_major: u32,
-    ios_id_minor: u32,
-    title_id_major: u32,
-    title_id_minor: [u8; 4],
-    title_type: u32,
-    group_id: u16,
+    pub ios_id_major: u32,
+    pub ios_id_minor: u32,
+    pub title_id_major: u32,
+    pub title_id_minor: [u8; 4],
+    pub title_type: u32,
+    pub group_id: u16,
     // used to cal
-    fakesign_padding: [u64; 7],
+    pub fakesign_padding: [u64; 7],
     #[brw(pad_before = 6)]
-    access_flags: u32,
-    title_version: u16,
+    pub access_flags: u32,
+    pub title_version: u16,
     #[bw(calc = contents.len() as u16)]
-    num_contents: u16,
+    pub num_contents: u16,
     #[brw(pad_after = 2)]
-    boot_idx: u16,
+    pub boot_idx: u16,
     #[br(count = num_contents)]
-    contents: Vec<TMDContent>,
+    pub contents: Vec<TMDContent>,
 }
 
 #[binrw]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Certificate {
-    sig_type: SigType,
+    pub sig_type: SigType,
     #[br(count = if sig_type == SigType::Rsa4096 { 512 }
     else if sig_type == SigType::Rsa2048 { 256 }
     else if sig_type == SigType::EllipticalCurve { 64 } else { 0 })]
-    sig: Vec<u8>,
+    pub sig: Vec<u8>,
     #[brw(pad_before = 60)]
-    issuer: [u8; 0x40],
-    key_type: KeyType,
-    subject: [u8; 64],
+    pub issuer: [u8; 0x40],
+    pub key_type: KeyType,
+    pub subject: [u8; 64],
     #[br(count = if key_type == KeyType::Rsa4096 { 512 } else if key_type == KeyType::Rsa2048 { 256 } else { 0 })]
-    key: Vec<u8>,
-    modulus: u32,
+    pub key: Vec<u8>,
+    pub modulus: u32,
     #[brw(pad_after = 52)]
-    pub_exp: u32,
+    pub pub_exp: u32,
 }
 
 #[binrw]

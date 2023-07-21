@@ -120,7 +120,7 @@ fn main() -> Result<(), MyError> {
             builder::build_from_directory(&src_dir, &mut f, &mut |percent| -> () {
                 println!("rebuilding... {}%", percent);
             })
-                .map_err(|e| format!("{e:?}"))?;
+            .map_err(|e| format!("{e:?}"))?;
         }
     }
     Ok(())

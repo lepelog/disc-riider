@@ -246,18 +246,6 @@ impl WiiPartitionReadInfo {
         reader.file.read_be()
     }
 
-    pub fn read_bi2<RS: Read + Seek>(
-        &mut self,
-        reader: &mut WiiIsoReader<RS>,
-    ) -> binrw::BinResult<Vec<u8>> {
-        reader
-            .file
-            .seek(SeekFrom::Start(self.get_partition_offset() + 0x440))?;
-        let mut bi2_buf = vec![0; 0x2000];
-        reader.file.read_exact(&mut bi2_buf)?;
-        Ok(bi2_buf)
-    }
-
     pub fn get_crypto_reader<'a, RS: Read + Seek>(
         &'a mut self,
         reader: &'a mut WiiIsoReader<RS>,
@@ -287,6 +275,17 @@ impl WiiPartitionReadInfo {
             _ => None,
         })?;
         Some(self.open_window(reader, offset, Some(length)))
+    }
+
+    pub fn read_bi2<RS: Read + Seek>(
+        &mut self,
+        reader: &mut WiiIsoReader<RS>,
+    ) -> binrw::BinResult<Vec<u8>> {
+        let mut crypt_part_reader = self.get_crypto_reader(reader);
+        crypt_part_reader.seek(SeekFrom::Start(0x440))?;
+        let mut bi2_buf = vec![];
+        crypt_part_reader.read_into_vec(0x440, 0x2000, &mut bi2_buf)?;
+        Ok(bi2_buf)
     }
 
     pub fn read_apploader<RS: Read + Seek>(
