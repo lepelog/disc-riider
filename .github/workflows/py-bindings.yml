@@ -23,27 +23,31 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # target: [x86_64, x86, aarch64, armv7, s390x, ppc64le]
-        target: [x86_64, aarch64, armv7]
+        platform: [
+          { target: "x86_64-unknown-linux-musl", image_tag: "x86_64-musl" },
+          # { target: "i686-unknown-linux-musl", image_tag: "i686-musl" },
+          { target: "aarch64-unknown-linux-musl", image_tag: "aarch64-musl" },
+          { target: "armv7-unknown-linux-musleabihf", image_tag: "armv7-musleabihf" },
+          # { target: "powerpc64le-unknown-linux-musl", image_tag: "powerpc64le-musl" },
+        ]
+    container:
+      image: docker://messense/rust-musl-cross:${{ matrix.platform.image_tag }}
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - name: Build Wheels - manylinux
+        uses: PyO3/maturin-action@main
         with:
-          python-version: '3.10'
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --manifest-path disc-riider-py/Cargo.toml
-          sccache: 'true'
+          target: ${{ matrix.platform.target }}
           manylinux: auto
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
+          container: off
+          args: --release -o dist --manifest-path disc-riider-py/Cargo.toml
+      - name: Build Wheels - musllinux
+        uses: PyO3/maturin-action@main
         with:
-          target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --manifest-path disc-riider-py/Cargo.toml
-          sccache: 'true'
+          target: ${{ matrix.platform.target }}
           manylinux: musllinux_1_1
+          container: off
+          args: --release -o dist --manifest-path disc-riider-py/Cargo.toml
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
