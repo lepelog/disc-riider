@@ -34,20 +34,23 @@ jobs:
       image: docker://messense/rust-musl-cross:${{ matrix.platform.image_tag }}
     steps:
       - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
       - name: Build Wheels - manylinux
         uses: PyO3/maturin-action@main
         with:
           target: ${{ matrix.platform.target }}
           manylinux: auto
           container: off
-          args: --release -o dist --manifest-path disc-riider-py/Cargo.toml
+          args: --release -o dist --find-interpreter --manifest-path disc-riider-py/Cargo.toml
       - name: Build Wheels - musllinux
         uses: PyO3/maturin-action@main
         with:
           target: ${{ matrix.platform.target }}
           manylinux: musllinux_1_1
           container: off
-          args: --release -o dist --manifest-path disc-riider-py/Cargo.toml
+          args: --release -o dist --find-interpreter --manifest-path disc-riider-py/Cargo.toml
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
