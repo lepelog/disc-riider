@@ -179,7 +179,7 @@ impl WiiIsoExtractor {
                         let path = dirstack.join("/");
                         dirstack.pop();
                         let should_remove = Python::with_gil(|py| {
-                            callback.call1(py, (path,)).and_then(|obj| obj.is_true(py))
+                            callback.call1(py, (path,)).and_then(|obj| obj.is_truthy(py))
                         }).unwrap_or(false);
                         !should_remove
                     }
@@ -310,7 +310,7 @@ pub fn rebuild_from_directory(
 
 /// A Python module implemented in Rust.
 #[pymodule]
-fn disc_riider_py(_py: Python, m: &PyModule) -> PyResult<()> {
+fn disc_riider_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<WiiIsoExtractor>()?;
     m.add_function(wrap_pyfunction!(rebuild_from_directory, m)?)?;
     Ok(())
