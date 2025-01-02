@@ -9,7 +9,7 @@ name = "disc_riider_py"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = "0.22.3"
+pyo3 = "0.23.3"
 disc_riider = { path = ".." }
 binrw = "0.14.0"
 sha1 = "0.10.5"
