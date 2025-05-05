@@ -11,7 +11,7 @@ repository = "https://github.com/lepelog/disc-riider"
 [dependencies]
 aes = "0.8.2"
 cbc = "0.1.2"
-binrw = "0.14.0"
+binrw = "0.15.0"
 encoding_rs = "0.8.32"
 thiserror = "2.0.9"
 sha1 = "0.10.5"

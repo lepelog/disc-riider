@@ -9,4 +9,4 @@ edition = "2021"
 disc_riider = { path = ".." }
 clap = { version = "4.5.20", features = ["derive"] }
 thiserror = "2.0.9"
-binrw = "0.14.0"
+binrw = "0.15.0"
