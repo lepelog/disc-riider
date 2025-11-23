@@ -49,7 +49,7 @@ jobs:
           sccache: 'true'
           manylinux: auto
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: wheels-linux-${{ matrix.platform.target }}
           path: dist
@@ -80,7 +80,7 @@ jobs:
           sccache: 'true'
           manylinux: musllinux_1_2
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: wheels-musllinux-${{ matrix.platform.target }}
           path: dist
@@ -105,7 +105,7 @@ jobs:
           args: --release --out dist --interpreter '3.9 3.10 3.11 3.12 3.13 3.14' --manifest-path disc-riider-py/Cargo.toml
           sccache: 'true'
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: wheels-windows-${{ matrix.platform.target }}
           path: dist
@@ -131,7 +131,7 @@ jobs:
           args: --release --out dist --interpreter '3.9 3.10 3.11 3.12 3.13 3.14' --manifest-path disc-riider-py/Cargo.toml
           sccache: 'true'
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: wheels-macos-${{ matrix.platform.target }}
           path: dist
@@ -146,7 +146,7 @@ jobs:
           command: sdist
           args: --out dist --manifest-path disc-riider-py/Cargo.toml
       - name: Upload sdist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: wheels-sdist
           path: dist
@@ -157,7 +157,7 @@ jobs:
     if: "startsWith(github.ref, 'refs/tags/')"
     needs: [linux, musllinux, windows, macos, sdist]
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
       - name: Publish to PyPI
         uses: PyO3/maturin-action@v1
         env:
