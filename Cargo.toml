@@ -14,7 +14,7 @@ cbc = "0.1.2"
 binrw = "0.15.0"
 encoding_rs = "0.8.32"
 thiserror = "2.0.9"
-sha1 = "0.10.5"
+sha1 = "0.11.0"
 
 [workspace]
 members = [".", "./iso-tool", "disc-riider-py"]
