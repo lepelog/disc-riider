@@ -164,8 +164,8 @@ impl WiiIsoExtractor {
         Ok(())
     }
 
-    pub fn remove_files_by_callback(&mut self, section: String, callback: PyObject) -> PyResult<()> {
-        fn should_remove_file(nodes: &mut Vec<FstNode>, dirstack: &mut Vec<String>, callback: &PyObject) {
+    pub fn remove_files_by_callback(&mut self, section: String, callback: Py<PyAny>) -> PyResult<()> {
+        fn should_remove_file(nodes: &mut Vec<FstNode>, dirstack: &mut Vec<String>, callback: &Py<PyAny>) {
             nodes.retain_mut(|node| {
                 match node {
                     FstNode::Directory { name, files } => {
@@ -178,7 +178,7 @@ impl WiiIsoExtractor {
                         dirstack.push(name.clone());
                         let path = dirstack.join("/");
                         dirstack.pop();
-                        let should_remove = Python::with_gil(|py| {
+                        let should_remove = Python::attach(|py| {
                             callback.call1(py, (path,)).and_then(|obj| obj.is_truthy(py))
                         }).unwrap_or(false);
                         !should_remove
@@ -193,8 +193,8 @@ impl WiiIsoExtractor {
         Ok(())
     }
 
-    pub fn extract_to(&mut self, path: PathBuf, callback: PyObject) -> PyResult<()> {
-        Python::with_gil(|py| {
+    pub fn extract_to(&mut self, path: PathBuf, callback: Py<PyAny>) -> PyResult<()> {
+        Python::attach(|py| {
             let _ = callback.call1(py, (0,));
         });
         let disc_header = self.iso.get_header().clone();
@@ -257,7 +257,7 @@ impl WiiIsoExtractor {
 
                             let done_percent =
                                 ((done_bytes as f64) / (total_bytes as f64) * 100f64) as u32;
-                            Python::with_gil(|py| {
+                            Python::attach(|py| {
                                 let _ = callback.call1(py, (done_percent,));
                             });
                         }
@@ -291,7 +291,7 @@ impl WiiIsoExtractor {
 pub fn rebuild_from_directory(
     src_dir: PathBuf,
     dest_path: PathBuf,
-    callback: PyObject,
+    callback: Py<PyAny>,
 ) -> PyResult<()> {
     let mut dest_file = OpenOptions::new()
         .truncate(true)
@@ -300,7 +300,7 @@ pub fn rebuild_from_directory(
         .create(true)
         .open(&dest_path)?;
     build_from_directory(&src_dir, &mut dest_file, &mut |done_percent| {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let _ = callback.call1(py, (done_percent,));
         });
     })
