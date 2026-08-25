@@ -1,11 +1,11 @@
 use std::{
     fs::{create_dir_all, File},
     io::{self, Read, Seek, SeekFrom, Write},
-    path::{Path},
+    path::Path,
 };
 
 use aes::{
-    cipher::{block_padding::NoPadding, BlockDecryptMut, KeyIvInit},
+    cipher::{block_padding::NoPadding, BlockModeDecrypt, KeyIvInit},
     Aes128,
 };
 use binrw::{BinReaderExt, BinWriterExt};
@@ -57,11 +57,14 @@ impl EncryptedPartState {
             let block_data =
                 &mut self.group_cache[(block * BLOCK_SIZE) as usize..][..BLOCK_SIZE as usize];
             let crypto = Aes128CbcDec::new(
-                self.encryption_key.as_ref().into(),
-                block_data[0x3d0..][..0x10].as_ref().into(),
+                &self.encryption_key.into(),
+                // since we used "read_exact" this can't fail
+                TryInto::<&[u8; 16]>::try_into(&block_data[0x3d0..][..0x10])
+                    .unwrap()
+                    .into(),
             );
             crypto
-                .decrypt_padded_mut::<NoPadding>(&mut block_data[BLOCK_DATA_OFFSET as usize..])
+                .decrypt_padded::<NoPadding>(&mut block_data[BLOCK_DATA_OFFSET as usize..])
                 // TODO: can bad data cause a panic here?
                 .unwrap();
         }

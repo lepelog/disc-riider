@@ -164,32 +164,41 @@ impl WiiIsoExtractor {
         Ok(())
     }
 
-    pub fn remove_files_by_callback(&mut self, section: String, callback: Py<PyAny>) -> PyResult<()> {
-        fn should_remove_file(nodes: &mut Vec<FstNode>, dirstack: &mut Vec<String>, callback: &Py<PyAny>) {
-            nodes.retain_mut(|node| {
-                match node {
-                    FstNode::Directory { name, files } => {
-                        dirstack.push(name.clone());
-                        should_remove_file(files, dirstack, callback);
-                        dirstack.pop();
-                        true
-                    },
-                    FstNode::File { name, .. } => {
-                        dirstack.push(name.clone());
-                        let path = dirstack.join("/");
-                        dirstack.pop();
-                        let should_remove = Python::attach(|py| {
-                            callback.call1(py, (path,)).and_then(|obj| obj.is_truthy(py))
-                        }).unwrap_or(false);
-                        !should_remove
-                    }
+    pub fn remove_files_by_callback(
+        &mut self,
+        section: String,
+        callback: Py<PyAny>,
+    ) -> PyResult<()> {
+        fn should_remove_file(
+            nodes: &mut Vec<FstNode>,
+            dirstack: &mut Vec<String>,
+            callback: &Py<PyAny>,
+        ) {
+            nodes.retain_mut(|node| match node {
+                FstNode::Directory { name, files } => {
+                    dirstack.push(name.clone());
+                    should_remove_file(files, dirstack, callback);
+                    dirstack.pop();
+                    true
+                }
+                FstNode::File { name, .. } => {
+                    dirstack.push(name.clone());
+                    let path = dirstack.join("/");
+                    dirstack.pop();
+                    let should_remove = Python::attach(|py| {
+                        callback
+                            .call1(py, (path,))
+                            .and_then(|obj| obj.is_truthy(py))
+                    })
+                    .unwrap_or(false);
+                    !should_remove
                 }
             });
         }
 
         let partition = self.get_partition(section)?;
         should_remove_file(partition.fst.get_entries_mut(), &mut Vec::new(), &callback);
-        
+
         Ok(())
     }
 

@@ -1,8 +1,7 @@
 use std::io::{Read, Seek, SeekFrom};
 
 use aes::{
-    cipher::{block_padding::NoPadding, BlockDecryptMut},
-    cipher::{BlockEncryptMut, KeyIvInit},
+    cipher::{block_padding::NoPadding, BlockModeDecrypt, BlockModeEncrypt, KeyIvInit},
     Aes128,
 };
 use binrw::{binrw, BinReaderExt, NullString};
@@ -103,7 +102,7 @@ fn decrypt_title_key(key: &[u8; 16], common_key_idx: u8, title_id: &[u8; 8]) -> 
     let mut iv = [0u8; 0x10];
     iv[..8].copy_from_slice(title_id);
     Aes128CbcDec::new(&COMMON_KEYS[common_key_idx as usize].into(), &iv.into())
-        .decrypt_padded_b2b_mut::<NoPadding>(key, &mut decrypted)
+        .decrypt_padded_b2b::<NoPadding>(key, &mut decrypted)
         .unwrap();
     decrypted
 }
@@ -113,7 +112,7 @@ fn encrypt_title_key(key: &[u8; 16], common_key_idx: u8, title_id: &[u8; 8]) -> 
     let mut iv = [0u8; 0x10];
     iv[..8].copy_from_slice(title_id);
     Aes128CbcEnc::new(&COMMON_KEYS[common_key_idx as usize].into(), &iv.into())
-        .encrypt_padded_b2b_mut::<NoPadding>(key, &mut encrypted)
+        .encrypt_padded_b2b::<NoPadding>(key, &mut encrypted)
         .unwrap();
     encrypted
 }

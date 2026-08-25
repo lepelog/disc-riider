@@ -1,8 +1,7 @@
 use std::io::{self, Read, Seek, SeekFrom, Write};
 
 use aes::{
-    cipher::{block_padding::NoPadding, BlockEncryptMut},
-    cipher::{BlockDecryptMut, KeyIvInit},
+    cipher::{block_padding::NoPadding, BlockModeDecrypt, BlockModeEncrypt, KeyIvInit},
     Aes128,
 };
 use sha1::{Digest, Sha1};
@@ -114,15 +113,20 @@ fn hash_encrypt_block(
             let ptr0 = &mut ptr1[c * 0x8000..];
             ptr0[0x340..][..h2.len()].copy_from_slice(&h2);
             ptr0[0x3E0..][..0x20].copy_from_slice(&[0; 0x20]);
-            Aes128CbcEnc::new(encryption_key.into(), [0; 16].as_ref().into())
-                .encrypt_padded_mut::<NoPadding>(&mut ptr0[..0x400], 0x400)
+            Aes128CbcEnc::new(encryption_key.into(), &[0; 16].into())
+                .encrypt_padded::<NoPadding>(&mut ptr0[..0x400], 0x400)
                 // TODO: can bad data cause a panic here?
                 .unwrap();
 
-            Aes128CbcEnc::new(encryption_key.into(), ptr0[0x3D0..][..16].into())
-                .encrypt_padded_mut::<NoPadding>(&mut ptr0[0x400..0x8000], 0x8000 - 0x400)
-                // TODO: can bad data cause a panic here?
-                .unwrap();
+            Aes128CbcEnc::new(
+                encryption_key.into(),
+                TryInto::<&[u8; 16]>::try_into(&ptr0[0x3D0..][..16])
+                    .unwrap()
+                    .into(),
+            )
+            .encrypt_padded::<NoPadding>(&mut ptr0[0x400..0x8000], 0x8000 - 0x400)
+            // TODO: can bad data cause a panic here?
+            .unwrap();
         }
     }
 }
@@ -149,15 +153,17 @@ fn decrypt_verify_group(
         let block_data = &mut buffer[(block * BLOCK_SIZE) as usize..][..BLOCK_SIZE as usize];
         let crypto = Aes128CbcDec::new(
             encryption_key.into(),
-            block_data[0x3d0..][..0x10].as_ref().into(),
+            TryInto::<&[u8; 16]>::try_into(&block_data[0x3d0..][..0x10])
+                .unwrap()
+                .into(),
         );
         crypto
-            .decrypt_padded_mut::<NoPadding>(&mut block_data[BLOCK_DATA_OFFSET as usize..])
+            .decrypt_padded::<NoPadding>(&mut block_data[BLOCK_DATA_OFFSET as usize..])
             // TODO: can bad data cause a panic here?
             .unwrap();
 
-        Aes128CbcDec::new(encryption_key.into(), [0; 16].as_ref().into())
-            .decrypt_padded_mut::<NoPadding>(&mut block_data[..0x400])
+        Aes128CbcDec::new(encryption_key.into(), &[0; 16].into())
+            .decrypt_padded::<NoPadding>(&mut block_data[..0x400])
             // TODO: can bad data cause a panic here?
             .unwrap();
     }
@@ -252,11 +258,13 @@ impl<'a, RS: Read + Seek> WiiEncryptedReadWriteStream<'a, RS> {
             let block_data =
                 &mut self.inner.group_cache[(block * BLOCK_SIZE) as usize..][..BLOCK_SIZE as usize];
             let crypto = Aes128CbcDec::new(
-                self.inner.encryption_key.as_ref().into(),
-                block_data[0x3d0..][..0x10].as_ref().into(),
+                &self.inner.encryption_key.into(),
+                TryInto::<&[u8; 0x10]>::try_into(&block_data[0x3d0..][..0x10])
+                    .unwrap()
+                    .into(),
             );
             crypto
-                .decrypt_padded_mut::<NoPadding>(&mut block_data[BLOCK_DATA_OFFSET as usize..])
+                .decrypt_padded::<NoPadding>(&mut block_data[BLOCK_DATA_OFFSET as usize..])
                 // TODO: can bad data cause a panic here?
                 .unwrap();
         }
